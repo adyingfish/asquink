@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
-import { Monitor, Server, Plus, Settings } from 'lucide-react'
+import { Monitor, Server, Plus, Settings, Terminal, Play, AlertCircle, CheckCircle } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import SettingsModal from './SettingsModal'
 
 interface SidebarProps {
-  onAddSession: (session: { id: string; name: string; type: 'local' | 'ssh' | 'wsl'; status: 'connecting' }) => void
+  onAddSession: (session: { id: string; name: string; type: 'local' | 'ssh' | 'wsl'; status: 'connecting' | 'connected' | 'disconnected' }) => void
+  activeSessionId: string | null
+  sessions: Array<{ id: string; name: string; type: 'local' | 'ssh' | 'wsl'; status: 'connecting' | 'connected' | 'disconnected' }>
 }
 
 interface ServerConfig {
@@ -15,16 +18,27 @@ interface ServerConfig {
   auth_type: string
 }
 
-export default function Sidebar({ onAddSession }: SidebarProps) {
+interface AgentStatus {
+  installed: boolean
+  version: string | null
+}
+
+export default function Sidebar({ onAddSession, activeSessionId, sessions }: SidebarProps) {
   const [activeSection, setActiveSection] = useState<'environments' | 'agents'>('environments')
   const [servers, setServers] = useState<ServerConfig[]>([])
   const [showAddServer, setShowAddServer] = useState(false)
   const [showPasswordPrompt, setShowPasswordPrompt] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
   const [password, setPassword] = useState('')
+  const [claudeStatus, setClaudeStatus] = useState<AgentStatus>({ installed: false, version: null })
+  const [hasApiKey, setHasApiKey] = useState(false)
+  const [error, setError] = useState('')
 
-  // Load servers on mount
+  // Load servers and check agent status
   useEffect(() => {
     loadServers()
+    checkClaudeStatus()
+    checkApiKey()
   }, [])
 
   const loadServers = async () => {
@@ -33,6 +47,24 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
       setServers(serverList)
     } catch (error) {
       console.error('Failed to load servers:', error)
+    }
+  }
+
+  const checkClaudeStatus = async () => {
+    try {
+      const status = await invoke<AgentStatus>('check_agent_installed', { agent: 'claude' })
+      setClaudeStatus(status)
+    } catch (error) {
+      console.error('Failed to check Claude status:', error)
+    }
+  }
+
+  const checkApiKey = async () => {
+    try {
+      const key = await invoke<string | null>('get_api_key')
+      setHasApiKey(!!key)
+    } catch (error) {
+      console.error('Failed to check API key:', error)
     }
   }
 
@@ -49,6 +81,7 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
       await invoke('create_local_session', { shell: null })
     } catch (error) {
       console.error('Failed to create local session:', error)
+      setError('Failed to create local session')
     }
   }
 
@@ -58,18 +91,14 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
       return
     }
     
-    // For key auth, connect directly
-    await connectSsh(server.id, null)
+    await connectSsh(server.id, null, server.name)
   }
 
-  const connectSsh = async (serverId: string, pwd: string | null) => {
-    const server = servers.find(s => s.id === serverId)
-    if (!server) return
-
+  const connectSsh = async (serverId: string, pwd: string | null, serverName: string) => {
     const sessionId = `ssh-${Date.now()}`
     onAddSession({
       id: sessionId,
-      name: server.name,
+      name: serverName,
       type: 'ssh',
       status: 'connecting'
     })
@@ -83,8 +112,44 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
       })
       setShowPasswordPrompt(null)
       setPassword('')
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to create SSH session:', error)
+      setError(`SSH connection failed: ${error}`)
+    }
+  }
+
+  const launchClaude = async () => {
+    if (!activeSessionId) {
+      setError('Please connect to a server first')
+      return
+    }
+
+    if (!hasApiKey) {
+      setError('Please configure API key in Settings')
+      setShowSettings(true)
+      return
+    }
+
+    const activeSession = sessions.find(s => s.id === activeSessionId)
+    if (!activeSession) {
+      setError('No active session')
+      return
+    }
+
+    if (activeSession.status !== 'connected') {
+      setError('Session not connected yet')
+      return
+    }
+
+    try {
+      await invoke('launch_agent', {
+        sessionId: activeSessionId,
+        agent: 'claude',
+        workingDir: null
+      })
+    } catch (error: any) {
+      console.error('Failed to launch Claude:', error)
+      setError(`Failed to launch: ${error}`)
     }
   }
 
@@ -109,7 +174,7 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
             }`}
           >
             <Server size={14} className="inline mr-1" />
-            环境
+            Environments
           </button>
           <button
             onClick={() => setActiveSection('agents')}
@@ -120,10 +185,19 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
             }`}
           >
             <Monitor size={14} className="inline mr-1" />
-            Agent
+            Agents
           </button>
         </div>
       </div>
+
+      {/* Error message */}
+      {error && (
+        <div className="mx-3 mt-2 p-2 bg-red-600/20 border border-red-600/50 rounded text-xs text-red-400 flex items-center gap-2">
+          <AlertCircle size={14} />
+          {error}
+          <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-300">×</button>
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-2">
@@ -131,20 +205,20 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
           <>
             {/* Quick Actions */}
             <div className="mb-4">
-              <div className="text-xs text-gray-500 uppercase font-semibold mb-2 px-2">快速连接</div>
+              <div className="text-xs text-gray-500 uppercase font-semibold mb-2 px-2">Quick Connect</div>
               <button
                 onClick={createLocalSession}
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-gray-300 hover:bg-dark-700 transition-colors"
               >
-                <Plus size={16} className="text-green-400" />
-                本地终端
+                <Terminal size={16} className="text-green-400" />
+                Local Terminal
               </button>
             </div>
 
             {/* Servers */}
             <div>
               <div className="flex items-center justify-between px-2 mb-2">
-                <span className="text-xs text-gray-500 uppercase font-semibold">服务器</span>
+                <span className="text-xs text-gray-500 uppercase font-semibold">Servers</span>
                 <button 
                   onClick={() => setShowAddServer(true)}
                   className="text-gray-500 hover:text-gray-300"
@@ -169,40 +243,109 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
 
               {servers.length === 0 && (
                 <div className="text-xs text-gray-500 px-3 py-2">
-                  暂无服务器配置
+                  No servers configured
                 </div>
               )}
             </div>
           </>
         ) : (
-          <div className="text-center text-gray-500 py-8">
-            <Monitor size={32} className="mx-auto mb-2 opacity-50" />
-            <div className="text-sm">Agent 功能</div>
-            <div className="text-xs mt-1">Phase 2 开发中</div>
+          <div className="space-y-2">
+            {/* Claude Agent */}
+            <div className="p-3 bg-dark-700 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <div className={`w-2 h-2 rounded-full ${claudeStatus.installed ? 'bg-green-400' : 'bg-red-400'}`} />
+                <span className="font-medium text-sm">Claude Code</span>
+                {claudeStatus.version && (
+                  <span className="text-xs text-gray-500">{claudeStatus.version}</span>
+                )}
+              </div>
+              
+              {!claudeStatus.installed ? (
+                <div className="text-xs text-gray-400">
+                  <p className="mb-2">Not installed</p>
+                  <code className="block bg-dark-800 p-2 rounded text-xs">
+                    npm install -g @anthropic-ai/claude-code
+                  </code>
+                </div>
+              ) : !hasApiKey ? (
+                <div className="text-xs text-gray-400">
+                  <p className="mb-2">API key required</p>
+                  <button 
+                    onClick={() => setShowSettings(true)}
+                    className="text-blue-400 hover:underline"
+                  >
+                    Configure in Settings →
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={launchClaude}
+                  disabled={!activeSessionId}
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-orange-600/20 text-orange-400 rounded hover:bg-orange-600/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Play size={14} />
+                  Launch Claude
+                </button>
+              )}
+            </div>
+
+            {/* Status */}
+            <div className="p-3 text-xs text-gray-500">
+              <div className="flex items-center gap-2 mb-1">
+                {hasApiKey ? (
+                  <><CheckCircle size={12} className="text-green-400" /> API key configured</>
+                ) : (
+                  <><AlertCircle size={12} className="text-yellow-400" /> API key missing</>
+                )}
+              </div>
+              {activeSessionId && (
+                <div className="flex items-center gap-2">
+                  <CheckCircle size={12} className="text-green-400" />
+                  Session active
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
 
       {/* Footer */}
       <div className="p-2 border-t border-dark-600">
-        <button className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-gray-400 hover:bg-dark-700 transition-colors">
+        <button 
+          onClick={() => setShowSettings(true)}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-gray-400 hover:bg-dark-700 transition-colors"
+        >
           <Settings size={16} />
-          设置
+          Settings
         </button>
       </div>
+
+      {/* Settings Modal */}
+      <SettingsModal 
+        isOpen={showSettings} 
+        onClose={() => {
+          setShowSettings(false)
+          checkApiKey()
+        }} 
+      />
 
       {/* Password Prompt Modal */}
       {showPasswordPrompt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-dark-800 rounded-lg p-4 w-80">
-            <h3 className="text-lg font-semibold mb-3">输入密码</h3>
+          <div className="bg-dark-800 rounded-lg p-4 w-80 border border-dark-600">
+            <h3 className="text-lg font-semibold mb-3">Enter Password</h3>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="SSH 密码"
+              placeholder="SSH password"
               className="w-full px-3 py-2 bg-dark-700 rounded border border-dark-600 text-white placeholder-gray-500 mb-3"
-              onKeyDown={(e) => e.key === 'Enter' && connectSsh(showPasswordPrompt, password)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const server = servers.find(s => s.id === showPasswordPrompt)
+                  if (server) connectSsh(showPasswordPrompt, password, server.name)
+                }
+              }}
             />
             <div className="flex gap-2">
               <button
@@ -212,13 +355,16 @@ export default function Sidebar({ onAddSession }: SidebarProps) {
                 }}
                 className="flex-1 px-3 py-2 bg-dark-700 rounded text-sm hover:bg-dark-600"
               >
-                取消
+                Cancel
               </button>
               <button
-                onClick={() => connectSsh(showPasswordPrompt, password)}
+                onClick={() => {
+                  const server = servers.find(s => s.id === showPasswordPrompt)
+                  if (server) connectSsh(showPasswordPrompt, password, server.name)
+                }}
                 className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500"
               >
-                连接
+                Connect
               </button>
             </div>
           </div>

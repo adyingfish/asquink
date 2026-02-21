@@ -9,9 +9,10 @@ import type { Session } from '../App'
 interface TerminalPanelProps {
   sessions: Session[]
   activeSessionId: string | null
+  onSessionStatusChange?: (id: string, status: Session['status']) => void
 }
 
-export default function TerminalPanel({ sessions, activeSessionId }: TerminalPanelProps) {
+export default function TerminalPanel({ sessions, activeSessionId, onSessionStatusChange }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -48,9 +49,20 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     terminal.open(containerRef.current)
     fitAddon.fit()
 
+    // Write welcome message
+    terminal.writeln('\x1b[1;34m╔══════════════════════════════════════╗\x1b[0m')
+    terminal.writeln('\x1b[1;34m║       Welcome to AgentHub            ║\x1b[0m')
+    terminal.writeln('\x1b[1;34m╚══════════════════════════════════════╝\x1b[0m')
+    terminal.writeln('')
+    terminal.writeln('\x1b[90m1. Configure your API key in Settings\x1b[0m')
+    terminal.writeln('\x1b[90m2. Connect to a server or open local terminal\x1b[0m')
+    terminal.writeln('\x1b[90m3. Launch Claude Code from the Agents tab\x1b[0m')
+    terminal.writeln('')
+
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
+    // Handle resize
     const handleResize = () => {
       fitAddonRef.current?.fit()
       // Notify backend of resize
@@ -91,6 +103,13 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     terminal.writeln(`\x1b[1;32mSession: ${activeSession.name}\x1b[0m`)
     terminal.writeln(`\x1b[90mStatus: ${activeSession.status}\x1b[0m`)
     terminal.writeln('')
+
+    // Update status to connected after a delay (simulating connection)
+    if (activeSession.status === 'connecting') {
+      setTimeout(() => {
+        onSessionStatusChange?.(activeSessionId, 'connected')
+      }, 1000)
+    }
 
     // Setup event listener for terminal data
     const setupListener = async () => {
@@ -141,13 +160,38 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   return (
     <div className="flex-1 bg-dark-900 relative overflow-hidden">
       {activeSession ? (
-        <div ref={containerRef} className="w-full h-full p-2" />
+        <div className="w-full h-full flex flex-col">
+          {/* Status bar */}
+          <div className="flex items-center gap-4 px-4 py-2 bg-dark-800 border-b border-dark-600 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">Session:</span>
+              <span className="font-medium">{activeSession.name}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500">Status:</span>
+              <span className={`font-medium ${
+                activeSession.status === 'connected' ? 'text-green-400' :
+                activeSession.status === 'connecting' ? 'text-yellow-400' :
+                'text-red-400'
+              }`}>
+                {activeSession.status}
+              </span>
+              {activeSession.status === 'connecting' && (
+                <span className="animate-pulse">...</span>
+              )}
+            </div>
+          </div>
+          {/* Terminal */}
+          <div ref={containerRef} className="flex-1 p-2" />
+        </div>
       ) : (
         <div className="w-full h-full flex items-center justify-center text-gray-600">
           <div className="text-center">
             <div className="text-4xl mb-4">🖥️</div>
             <div className="text-lg">No active session</div>
-            <div className="text-sm mt-2">Click the + button to open a terminal</div>
+            <div className="text-sm mt-2 text-gray-500">
+              Click the + button or select a server to start
+            </div>
           </div>
         </div>
       )}

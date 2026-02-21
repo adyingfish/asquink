@@ -19,6 +19,12 @@ function App() {
     setActiveSessionId(session.id)
   }
 
+  const updateSessionStatus = (id: string, status: Session['status']) => {
+    setSessions(prev => prev.map(s => 
+      s.id === id ? { ...s, status } : s
+    ))
+  }
+
   const closeSession = (id: string) => {
     const newSessions = sessions.filter(s => s.id !== id)
     setSessions(newSessions)
@@ -29,7 +35,11 @@ function App() {
 
   return (
     <div className="h-screen w-screen flex bg-dark-900 text-gray-200 overflow-hidden">
-      <Sidebar onAddSession={addSession} />
+      <Sidebar 
+        onAddSession={addSession} 
+        activeSessionId={activeSessionId}
+        sessions={sessions}
+      />
       <div className="flex-1 flex flex-col min-w-0">
         <TabBar
           sessions={sessions}
@@ -40,6 +50,7 @@ function App() {
         <TerminalPanel
           sessions={sessions}
           activeSessionId={activeSessionId}
+          onSessionStatusChange={updateSessionStatus}
         />
       </div>
     </div>
