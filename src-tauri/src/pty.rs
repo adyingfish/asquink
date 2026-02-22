@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use anyhow::Result;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock};
+use tauri::Emitter;
 
 use crate::session::{SessionStatus, TerminalSession};
 
@@ -128,6 +129,7 @@ impl PtySession {
 #[async_trait]
 impl TerminalSession for PtySession {
     async fn write(&self, data: &[u8]) -> Result<()> {
+        use std::io::Write;
         let mut writer = self.writer.lock().await;
         // portable-pty MasterPty doesn't have async write, we use blocking
         writer.write_all(data)?;

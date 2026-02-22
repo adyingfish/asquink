@@ -1,11 +1,9 @@
 use async_trait::async_trait;
-use anyhow::{Result, Context, bail};
+use anyhow::{Result, bail};
 use russh::{client, ChannelMsg, Disconnect};
 use russh_keys::key::PublicKey;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::session::{SessionStatus, TerminalSession};
@@ -95,12 +93,13 @@ impl SshSession {
         let status = Arc::new(RwLock::new(SessionStatus::Connected));
         let status_clone = status.clone();
         let id_clone = id.clone();
+        let channel_id_clone = channel_id;
         
         // Spawn task to read from channel and emit events
         tokio::spawn(async move {
-            let mut handle = handle_clone.lock().await;
             loop {
-                match handle.wait().await {
+                // Use channel's wait method in russh 0.48
+                match channel.wait().await {
                     Some(ChannelMsg::Data { ref data, .. }) => {
                         let data_vec = data.to_vec();
                         // Emit to frontend via Tauri event
@@ -134,19 +133,22 @@ impl SshSession {
 impl TerminalSession for SshSession {
     async fn write(&self, data: &[u8]) -> Result<()> {
         let mut handle = self.handle.lock().await;
-        handle.data(self.channel_id, data.into()).await?;
+        handle.data(self.channel_id, data.into()).await
+            .map_err(|_| anyhow::anyhow!("Failed to write data"))?;
         Ok(())
     }
     
     async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         let mut handle = self.handle.lock().await;
-        handle.window_change(self.channel_id, cols, rows, 0, 0).await?;
+        handle.window_change(self.channel_id, cols, rows, 0, 0).await
+            .map_err(|e| anyhow::anyhow!("Resize failed: {:?}", e))?;
         Ok(())
     }
     
     async fn close(&mut self) -> Result<()> {
         let mut handle = self.handle.lock().await;
-        handle.disconnect(Disconnect::ByApplication, "", "").await?;
+        handle.disconnect(Disconnect::ByApplication, "", "").await
+            .map_err(|e| anyhow::anyhow!("Disconnect failed: {:?}", e))?;
         *self.status.write().await = SessionStatus::Disconnected;
         Ok(())
     }

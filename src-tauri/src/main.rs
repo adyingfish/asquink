@@ -3,8 +3,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{Manager, State};
+use tauri::{Manager, State, Emitter};
 use tokio::sync::Mutex;
+use session::TerminalSession;
 
 mod database;
 mod keychain;
