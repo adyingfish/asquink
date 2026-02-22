@@ -1,17 +1,18 @@
 use async_trait::async_trait;
 use anyhow::{Result, bail};
-use russh::{client, ChannelMsg, Disconnect};
-use russh_keys::key::PublicKey;
+use russh::{client, ChannelMsg, Disconnect, ChannelId};
+use ssh_key::public::PublicKey;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex, RwLock};
+use tauri::Emitter;
 
 use crate::session::{SessionStatus, TerminalSession};
 
 pub struct SshSession {
     id: String,
     handle: Arc<Mutex<client::Handle<ClientHandler>>>,
-    channel_id: u32,
+    channel_id: ChannelId,
     status: Arc<RwLock<SessionStatus>>,
     data_sender: mpsc::UnboundedSender<Vec<u8>>,
 }
