@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::{Manager, State, Emitter};
+use tauri::{Manager, State};
 use tokio::sync::Mutex;
 use session::TerminalSession;
 
@@ -65,7 +65,8 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&app_dir)?;
     
     let db_path = app_dir.join("agenthub.db");
-    let db = tauri::async_runtime::block_on(Database::new(db_path.to_str().unwrap()))?;
+    let db_url = format!("sqlite:{}?mode=rwc", db_path.to_str().unwrap());
+    let db = tauri::async_runtime::block_on(Database::new(&db_url))?;
     
     let state = AppState {
         db,
