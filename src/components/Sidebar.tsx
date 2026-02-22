@@ -327,12 +327,13 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
       </div>
 
       {/* Settings Modal */}
-      <SettingsModal 
-        isOpen={showSettings} 
+      <SettingsModal
+        isOpen={showSettings}
         onClose={() => {
           setShowSettings(false)
           checkApiKey()
-        }} 
+        }}
+        onApiKeyChange={(hasKey) => setHasApiKey(hasKey)}
       />
 
       {/* Password Prompt Modal */}

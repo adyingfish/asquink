@@ -5,9 +5,10 @@ import { Key, Trash2, Save, X } from 'lucide-react'
 interface SettingsModalProps {
   isOpen: boolean
   onClose: () => void
+  onApiKeyChange?: (hasKey: boolean) => void
 }
 
-export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
+export default function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModalProps) {
   const [apiKey, setApiKey] = useState('')
   const [hasKey, setHasKey] = useState(false)
   const [message, setMessage] = useState('')
@@ -39,6 +40,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setHasKey(true)
       setApiKey('')
       setMessage('API key saved successfully!')
+      onApiKeyChange?.(true)
       setTimeout(() => setMessage(''), 3000)
     } catch (error) {
       setMessage(`Failed to save: ${error}`)
@@ -51,6 +53,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setHasKey(false)
       setApiKey('')
       setMessage('API key deleted')
+      onApiKeyChange?.(false)
       setTimeout(() => setMessage(''), 3000)
     } catch (error) {
       setMessage(`Failed to delete: ${error}`)
