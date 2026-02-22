@@ -38,7 +38,7 @@ export default function TerminalPanel({ sessions, activeSessionId, onSessionStat
         white: '#bfbfbf',
       },
       fontSize: 14,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
       cursorBlink: true,
       cursorStyle: 'block',
     })
