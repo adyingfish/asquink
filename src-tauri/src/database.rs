@@ -85,9 +85,20 @@ impl Database {
         .execute(&self.pool)
         .await?;
         
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Insert built-in agents
         self.init_builtin_agents().await?;
-        
+
         Ok(())
     }
     
@@ -163,6 +174,35 @@ impl Database {
     pub async fn delete_server(&self, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM servers WHERE id = ?1")
             .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT value FROM settings WHERE key = ?1"
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    pub async fn set_setting(&self, key: &str, value: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = ?2"
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_setting(&self, key: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM settings WHERE key = ?1")
+            .bind(key)
             .execute(&self.pool)
             .await?;
         Ok(())

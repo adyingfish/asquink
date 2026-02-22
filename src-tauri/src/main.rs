@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use session::TerminalSession;
 
 mod database;
-mod keychain;
 mod pty;
 mod session;
 mod ssh;
@@ -80,18 +79,21 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 // API Key management commands
 #[tauri::command]
-async fn save_api_key(api_key: String) -> Result<(), String> {
-    keychain::store_api_key(&api_key).map_err(|e| e.to_string())
+async fn save_api_key(state: State<'_, Arc<Mutex<AppState>>>, api_key: String) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.set_setting("anthropic_api_key", &api_key).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn get_api_key() -> Result<Option<String>, String> {
-    keychain::get_api_key().map_err(|e| e.to_string())
+async fn get_api_key(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Option<String>, String> {
+    let state = state.lock().await;
+    state.db.get_setting("anthropic_api_key").await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn delete_api_key() -> Result<(), String> {
-    keychain::delete_api_key().map_err(|e| e.to_string())
+async fn delete_api_key(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.delete_setting("anthropic_api_key").await.map_err(|e| e.to_string())
 }
 
 // Server management commands
@@ -157,11 +159,11 @@ async fn launch_agent(
     agent: String,
     working_dir: Option<String>,
 ) -> Result<(), String> {
-    let api_key = keychain::get_api_key()
+    let state = state.lock().await;
+
+    let api_key = state.db.get_setting("anthropic_api_key").await
         .map_err(|e| e.to_string())?
         .ok_or("API key not configured. Please set it in Settings.")?;
-    
-    let state = state.lock().await;
     
     // Prepare launch command with environment variables
     let mut cmd = format!("export ANTHROPIC_API_KEY='{}'; ", api_key);
