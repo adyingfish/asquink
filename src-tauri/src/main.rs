@@ -183,11 +183,11 @@ async fn launch_agent(
 #[tauri::command]
 async fn create_local_session(
     state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
     shell: Option<String>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
-    let session_id = uuid::Uuid::new_v4().to_string();
     state.pty_manager.create_session(&session_id, shell, app_handle).await.map_err(|e| e.to_string())?;
     Ok(session_id)
 }
@@ -195,15 +195,14 @@ async fn create_local_session(
 #[tauri::command]
 async fn create_ssh_session(
     state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
     req: CreateSshSessionRequest,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
-    
+
     // Get server config from database
     let server = state.db.get_server(&req.server_id).await.map_err(|e| e.to_string())?;
-    
-    let session_id = uuid::Uuid::new_v4().to_string();
     
     // Determine auth method
     let auth = if server.auth_type == "password" {

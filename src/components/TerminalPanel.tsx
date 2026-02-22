@@ -104,13 +104,6 @@ export default function TerminalPanel({ sessions, activeSessionId, onSessionStat
     terminal.writeln(`\x1b[90mStatus: ${activeSession.status}\x1b[0m`)
     terminal.writeln('')
 
-    // Update status to connected after a delay (simulating connection)
-    if (activeSession.status === 'connecting') {
-      setTimeout(() => {
-        onSessionStatusChange?.(activeSessionId, 'connected')
-      }, 1000)
-    }
-
     // Setup event listener for terminal data
     const setupListener = async () => {
       // Clean up previous listener

@@ -5,6 +5,7 @@ import SettingsModal from './SettingsModal'
 
 interface SidebarProps {
   onAddSession: (session: { id: string; name: string; type: 'local' | 'ssh' | 'wsl'; status: 'connecting' | 'connected' | 'disconnected' }) => void
+  onSessionStatusChange?: (id: string, status: 'connecting' | 'connected' | 'disconnected') => void
   activeSessionId: string | null
   sessions: Array<{ id: string; name: string; type: 'local' | 'ssh' | 'wsl'; status: 'connecting' | 'connected' | 'disconnected' }>
 }
@@ -23,7 +24,7 @@ interface AgentStatus {
   version: string | null
 }
 
-export default function Sidebar({ onAddSession, activeSessionId, sessions }: SidebarProps) {
+export default function Sidebar({ onAddSession, onSessionStatusChange, activeSessionId, sessions }: SidebarProps) {
   const [activeSection, setActiveSection] = useState<'environments' | 'agents'>('environments')
   const [servers, setServers] = useState<ServerConfig[]>([])
   const [showAddServer, setShowAddServer] = useState(false)
@@ -76,11 +77,13 @@ export default function Sidebar({ onAddSession, activeSessionId, sessions }: Sid
       type: 'local',
       status: 'connecting'
     })
-    
+
     try {
-      await invoke('create_local_session', { shell: null })
+      await invoke('create_local_session', { sessionId: id, shell: null })
+      onSessionStatusChange?.(id, 'connected')
     } catch (error) {
       console.error('Failed to create local session:', error)
+      onSessionStatusChange?.(id, 'disconnected')
       setError('Failed to create local session')
     }
   }
@@ -105,15 +108,18 @@ export default function Sidebar({ onAddSession, activeSessionId, sessions }: Sid
 
     try {
       await invoke('create_ssh_session', {
+        sessionId,
         req: {
           server_id: serverId,
           password: pwd,
         }
       })
+      onSessionStatusChange?.(sessionId, 'connected')
       setShowPasswordPrompt(null)
       setPassword('')
     } catch (error: any) {
       console.error('Failed to create SSH session:', error)
+      onSessionStatusChange?.(sessionId, 'disconnected')
       setError(`SSH connection failed: ${error}`)
     }
   }

@@ -35,8 +35,9 @@ function App() {
 
   return (
     <div className="h-screen w-screen flex bg-dark-900 text-gray-200 overflow-hidden">
-      <Sidebar 
-        onAddSession={addSession} 
+      <Sidebar
+        onAddSession={addSession}
+        onSessionStatusChange={updateSessionStatus}
         activeSessionId={activeSessionId}
         sessions={sessions}
       />
