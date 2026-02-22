@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use anyhow::Result;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize, MasterPty};
+use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -15,7 +15,8 @@ pub struct PtyManager {
 
 pub struct PtySession {
     id: String,
-    writer: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     status: Arc<RwLock<SessionStatus>>,
     _child: Arc<Mutex<Box<dyn portable_pty::Child + Send + Sync>>>,
 }
@@ -89,37 +90,36 @@ impl PtyManager {
 impl PtySession {
     pub fn new(
         id: String,
-        mut master: Box<dyn portable_pty::MasterPty + Send>,
+        master: Box<dyn portable_pty::MasterPty + Send>,
         child: Box<dyn portable_pty::Child + Send + Sync>,
         app_handle: tauri::AppHandle,
     ) -> Result<Self> {
         let id_clone = id.clone();
         let status = Arc::new(RwLock::new(SessionStatus::Connected));
-        let status_clone = status.clone();
-        
+
         // Spawn reader thread
         let mut reader = master.try_clone_reader()?;
+        // Take the writer before moving master into Arc
+        let writer = master.take_writer()?;
+
         std::thread::spawn(move || {
             let mut buf = [0u8; 1024];
             loop {
                 match reader.read(&mut buf) {
                     Ok(n) if n > 0 => {
                         let data = buf[..n].to_vec();
-                        // Convert to base64 or properly encode for JSON
                         let _ = app_handle.emit(&format!("terminal-data-{}", id_clone), data);
                     }
                     Ok(_) => break,
                     Err(_) => break,
                 }
             }
-            // Update status when done
-            // Note: This won't work as-is since we're in a thread, not async
-            // In production, use a channel to communicate back
         });
-        
+
         Ok(Self {
             id,
-            writer: Arc::new(Mutex::new(master)),
+            master: Arc::new(Mutex::new(master)),
+            writer: Arc::new(Mutex::new(writer)),
             status,
             _child: Arc::new(Mutex::new(child)),
         })
@@ -137,8 +137,8 @@ impl TerminalSession for PtySession {
     }
     
     async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
-        let writer = self.writer.lock().await;
-        writer.resize(PtySize {
+        let master = self.master.lock().await;
+        master.resize(PtySize {
             rows,
             cols,
             pixel_width: 0,
