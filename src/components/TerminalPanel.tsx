@@ -98,6 +98,9 @@ export default function TerminalPanel({ sessions, activeSessionId, onSessionStat
 
     const terminal = terminalRef.current
     
+    // Refit terminal now that container is visible
+    fitAddonRef.current?.fit()
+
     // Clear and show session info
     terminal.clear()
     terminal.writeln(`\x1b[1;32mSession: ${activeSession.name}\x1b[0m`)
@@ -151,34 +154,32 @@ export default function TerminalPanel({ sessions, activeSessionId, onSessionStat
   const activeSession = sessions.find(s => s.id === activeSessionId)
 
   return (
-    <div className="flex-1 bg-dark-900 relative overflow-hidden">
-      {activeSession ? (
-        <div className="w-full h-full flex flex-col">
-          {/* Status bar */}
-          <div className="flex items-center gap-4 px-4 py-2 bg-dark-800 border-b border-dark-600 text-xs">
-            <div className="flex items-center gap-2">
-              <span className="text-gray-500">Session:</span>
-              <span className="font-medium">{activeSession.name}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-gray-500">Status:</span>
-              <span className={`font-medium ${
-                activeSession.status === 'connected' ? 'text-green-400' :
-                activeSession.status === 'connecting' ? 'text-yellow-400' :
-                'text-red-400'
-              }`}>
-                {activeSession.status}
-              </span>
-              {activeSession.status === 'connecting' && (
-                <span className="animate-pulse">...</span>
-              )}
-            </div>
+    <div className="flex-1 bg-dark-900 relative overflow-hidden flex flex-col">
+      {activeSession && (
+        <div className="flex items-center gap-4 px-4 py-2 bg-dark-800 border-b border-dark-600 text-xs shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500">Session:</span>
+            <span className="font-medium">{activeSession.name}</span>
           </div>
-          {/* Terminal */}
-          <div ref={containerRef} className="flex-1 p-2" />
+          <div className="flex items-center gap-2">
+            <span className="text-gray-500">Status:</span>
+            <span className={`font-medium ${
+              activeSession.status === 'connected' ? 'text-green-400' :
+              activeSession.status === 'connecting' ? 'text-yellow-400' :
+              'text-red-400'
+            }`}>
+              {activeSession.status}
+            </span>
+            {activeSession.status === 'connecting' && (
+              <span className="animate-pulse">...</span>
+            )}
+          </div>
         </div>
-      ) : (
-        <div className="w-full h-full flex items-center justify-center text-gray-600">
+      )}
+      {/* Terminal container - always in DOM so xterm can initialize on mount */}
+      <div ref={containerRef} className={`flex-1 p-2 ${activeSession ? '' : 'invisible'}`} />
+      {!activeSession && (
+        <div className="absolute inset-0 flex items-center justify-center text-gray-600">
           <div className="text-center">
             <div className="text-4xl mb-4">🖥️</div>
             <div className="text-lg">No active session</div>
