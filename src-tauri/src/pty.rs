@@ -32,13 +32,15 @@ impl PtyManager {
         &self,
         id: &str,
         shell: Option<String>,
+        cols: u16,
+        rows: u16,
         app_handle: tauri::AppHandle,
     ) -> Result<()> {
         let pty_system = native_pty_system();
-        
+
         let pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows,
+            cols,
             pixel_width: 0,
             pixel_height: 0,
         })?;

@@ -135,14 +135,25 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   // Handle session change - setup data listener
   useEffect(() => {
     if (!activeSessionId || !terminalRef.current) return
-    
+
     const activeSession = sessions.find(s => s.id === activeSessionId)
     if (!activeSession) return
 
     const terminal = terminalRef.current
-    
+
     // Refit terminal now that container is visible
     fitAddonRef.current?.fit()
+
+    // Sync terminal size to PTY immediately
+    const dims = fitAddonRef.current?.proposeDimensions()
+    if (dims && activeSession.status === 'connected') {
+      invoke('resize_session', {
+        sessionId: activeSessionId,
+        sessionType: activeSession.type,
+        cols: dims.cols,
+        rows: dims.rows,
+      }).catch(console.error)
+    }
 
     // Clear and show session info
     terminal.clear()

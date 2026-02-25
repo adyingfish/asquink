@@ -325,10 +325,12 @@ async fn create_local_session(
     state: State<'_, Arc<Mutex<AppState>>>,
     session_id: String,
     shell: Option<String>,
+    cols: u16,
+    rows: u16,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
-    state.pty_manager.create_session(&session_id, shell, app_handle).await.map_err(|e| e.to_string())?;
+    state.pty_manager.create_session(&session_id, shell, cols, rows, app_handle).await.map_err(|e| e.to_string())?;
     Ok(session_id)
 }
 

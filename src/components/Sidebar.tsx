@@ -100,7 +100,12 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
     })
 
     try {
-      await invoke('create_local_session', { sessionId: id, shell: null })
+      await invoke('create_local_session', {
+        sessionId: id,
+        shell: null,
+        cols: 80,
+        rows: 24
+      })
       onSessionStatusChange?.(id, 'connected')
     } catch (error) {
       console.error('Failed to create local session:', error)
