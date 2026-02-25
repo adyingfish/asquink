@@ -74,6 +74,7 @@ function App() {
       <Sidebar
         onAddSession={addSession}
         onSessionStatusChange={updateSessionStatus}
+        onSelectSession={setActiveSessionId}
         activeSessionId={activeSessionId}
         sessions={sessions}
       />

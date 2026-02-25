@@ -7,6 +7,7 @@ import type { Session, Env, Project } from '../App'
 interface SidebarProps {
   onAddSession: (session: Session) => void
   onSessionStatusChange?: (id: string, status: Session['status']) => void
+  onSelectSession: (id: string) => void
   activeSessionId: string | null
   sessions: Session[]
 }
@@ -19,12 +20,13 @@ const AGENTS = [
   { id: 'openclaw', name: 'OpenClaw', short: 'OClaw', color: '#C084FC', needsProject: false },
 ]
 
-export default function Sidebar({ onAddSession, onSessionStatusChange, activeSessionId, sessions }: SidebarProps) {
+export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectSession, activeSessionId, sessions }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'sessions' | 'envs' | 'projects'>('sessions')
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [showAddServer, setShowAddServer] = useState(false)
   const [showAddProject, setShowAddProject] = useState(false)
+  const [showAgentSelect, setShowAgentSelect] = useState<{ env: Env; project?: Project } | null>(null)
   const [showPasswordPrompt, setShowPasswordPrompt] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [password, setPassword] = useState('')
@@ -84,21 +86,16 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
     return env.name
   }
 
-  const createSession = async (env: Env) => {
-    if (env.type === 'local') {
-      await createLocalSession(env)
-    } else {
-      await createSshSession(env)
-    }
-  }
-
-  const createLocalSession = async (env: Env) => {
+  // 创建本地会话（带 Agent 和可选项目）
+  const createLocalSessionWithAgent = async (env: Env, agentId: string, projectId?: string) => {
     const id = `local-${Date.now()}`
     onAddSession({
       id,
       name: env.name,
       type: 'local',
       envId: env.id,
+      agentId,
+      projectId,
       status: 'connecting'
     })
 
@@ -112,22 +109,16 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
     }
   }
 
-  const createSshSession = async (env: Env) => {
-    if (env.auth_type === 'password') {
-      setShowPasswordPrompt(env.id)
-      return
-    }
-
-    await connectSsh(env.id, null, env.name)
-  }
-
-  const connectSsh = async (envId: string, pwd: string | null, envName: string) => {
+  // 创建 SSH 会话（带 Agent 和可选项目）
+  const createSshSessionWithAgent = async (env: Env, agentId: string, projectId?: string, pwd?: string | null) => {
     const sessionId = `ssh-${Date.now()}`
     onAddSession({
       id: sessionId,
-      name: envName,
+      name: env.name,
       type: 'ssh',
-      envId: envId,
+      envId: env.id,
+      agentId,
+      projectId,
       status: 'connecting'
     })
 
@@ -135,7 +126,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
       await invoke('create_ssh_session', {
         sessionId,
         req: {
-          server_id: envId,
+          server_id: env.id,
           password: pwd,
         }
       })
@@ -146,6 +137,20 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
       console.error('Failed to create SSH session:', error)
       onSessionStatusChange?.(sessionId, 'disconnected')
       setError(`SSH connection failed: ${error}`)
+    }
+  }
+
+  // 创建会话的主入口
+  const createSessionWithAgent = async (env: Env, agentId: string, projectId?: string) => {
+    if (env.type === 'local') {
+      await createLocalSessionWithAgent(env, agentId, projectId)
+    } else if (env.auth_type === 'password') {
+      // 需要密码，先保存选择，显示密码输入
+      setShowPasswordPrompt(env.id)
+      // 保存待创建的会话信息
+      sessionStorage.setItem('pending_session', JSON.stringify({ envId: env.id, agentId, projectId }))
+    } else {
+      await createSshSessionWithAgent(env, agentId, projectId, null)
     }
   }
 
@@ -221,8 +226,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
                 expanded={expandedEnvs.has(env.id)}
                 onToggle={() => toggleEnvExpand(env.id)}
                 onSelectSession={(id) => {
-                  const session = sessions.find(s => s.id === id)
-                  if (session) onAddSession(session)
+                  onSelectSession(id)
                 }}
               />
             ))}
@@ -251,7 +255,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
             {envs.map(env => (
               <button
                 key={env.id}
-                onClick={() => createSession(env)}
+                onClick={() => setShowAgentSelect({ env })}
                 className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm hover:bg-[#161822] transition-colors mb-0.5 group"
               >
                 {getEnvIcon(env)}
@@ -292,6 +296,11 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
               return (
                 <button
                   key={project.id}
+                  onClick={() => {
+                    if (env) {
+                      setShowAgentSelect({ env, project })
+                    }
+                  }}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm hover:bg-[#161822] transition-colors mb-0.5"
                 >
                   <Folder size={14} className="text-[#E8915A]" />
@@ -397,11 +406,25 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
         />
       )}
 
+      {/* Agent Select Modal */}
+      {showAgentSelect && (
+        <AgentSelectModal
+          env={showAgentSelect.env}
+          projects={projects}
+          preselectedProject={showAgentSelect.project}
+          onClose={() => setShowAgentSelect(null)}
+          onSelectAgent={(agentId, projectId) => {
+            createSessionWithAgent(showAgentSelect!.env, agentId, projectId)
+            setShowAgentSelect(null)
+          }}
+        />
+      )}
+
       {/* Password Prompt Modal */}
       {showPasswordPrompt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-[#0f1117] rounded-lg p-4 w-80 border border-[#1e2130]">
-            <h3 className="text-lg font-semibold mb-3">Enter Password</h3>
+            <h3 className="text-lg font-semibold mb-3">输入 SSH 密码</h3>
             <input
               type="password"
               value={password}
@@ -411,7 +434,12 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   const env = envs.find(e => e.id === showPasswordPrompt)
-                  if (env) connectSsh(showPasswordPrompt, password, env.name)
+                  const pending = sessionStorage.getItem('pending_session')
+                  if (env && pending) {
+                    const { agentId, projectId } = JSON.parse(pending)
+                    createSshSessionWithAgent(env, agentId, projectId, password)
+                    sessionStorage.removeItem('pending_session')
+                  }
                 }
               }}
             />
@@ -420,19 +448,25 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, activeSes
                 onClick={() => {
                   setShowPasswordPrompt(null)
                   setPassword('')
+                  sessionStorage.removeItem('pending_session')
                 }}
                 className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130]"
               >
-                Cancel
+                取消
               </button>
               <button
                 onClick={() => {
                   const env = envs.find(e => e.id === showPasswordPrompt)
-                  if (env) connectSsh(showPasswordPrompt, password, env.name)
+                  const pending = sessionStorage.getItem('pending_session')
+                  if (env && pending) {
+                    const { agentId, projectId } = JSON.parse(pending)
+                    createSshSessionWithAgent(env, agentId, projectId, password)
+                    sessionStorage.removeItem('pending_session')
+                  }
                 }}
                 className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500"
               >
-                Connect
+                连接
               </button>
             </div>
           </div>
@@ -810,6 +844,129 @@ function AddProjectModal({
             className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500 disabled:opacity-50"
           >
             {loading ? 'Adding...' : 'Add Project'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Agent Select Modal
+function AgentSelectModal({
+  env,
+  projects,
+  preselectedProject,
+  onClose,
+  onSelectAgent,
+}: {
+  env: Env
+  projects: Project[]
+  preselectedProject?: Project
+  onClose: () => void
+  onSelectAgent: (agentId: string, projectId?: string) => void
+}) {
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [selectedProject, setSelectedProject] = useState<string | null>(preselectedProject?.id || null)
+
+  const envProjects = projects.filter(p => p.env_id === env.id)
+  const selectedAgentConfig = AGENTS.find(a => a.id === selectedAgent)
+
+  const handleConfirm = () => {
+    if (!selectedAgent) return
+    const agent = AGENTS.find(a => a.id === selectedAgent)
+    if (agent?.needsProject && !selectedProject) return
+    onSelectAgent(selectedAgent, selectedProject || undefined)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-[#0f1117] rounded-lg p-5 w-96 border border-[#1e2130]">
+        <h3 className="text-lg font-semibold mb-1">新建会话</h3>
+        <p className="text-xs text-[#555872] mb-4">
+          环境: {env.type === 'local' ? '💻' : '☁️'} {env.name}
+        </p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-[#8b8fa7] mb-2">选择 Agent</label>
+            <div className="space-y-1">
+              {AGENTS.map(agent => (
+                <button
+                  key={agent.id}
+                  onClick={() => {
+                    setSelectedAgent(agent.id)
+                    if (!agent.needsProject) {
+                      setSelectedProject(null)
+                    }
+                  }}
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-colors ${
+                    selectedAgent === agent.id
+                      ? 'bg-[#E8915A]/20 border border-[#E8915A]'
+                      : 'bg-[#161822] border border-transparent hover:border-[#2a2d3e]'
+                  }`}
+                >
+                  <div
+                    className="w-1 h-4 rounded"
+                    style={{ backgroundColor: agent.color }}
+                  />
+                  <div className="flex-1">
+                    <div className="text-sm font-medium text-[#e2e4ed]">{agent.name}</div>
+                    <div className="text-[10px] text-[#555872]">
+                      {agent.needsProject ? '📁 项目型 - 需要绑定项目' : '💬 独立型 - 无需项目'}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {selectedAgentConfig?.needsProject && (
+            <div>
+              <label className="block text-xs text-[#8b8fa7] mb-2">选择项目</label>
+              {envProjects.length > 0 ? (
+                <div className="space-y-1 max-h-40 overflow-y-auto">
+                  {envProjects.map(project => (
+                    <button
+                      key={project.id}
+                      onClick={() => setSelectedProject(project.id)}
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-colors ${
+                        selectedProject === project.id
+                          ? 'bg-[#60A5FA]/20 border border-[#60A5FA]'
+                          : 'bg-[#161822] border border-transparent hover:border-[#2a2d3e]'
+                      }`}
+                    >
+                      <Folder size={14} className="text-[#E8915A]" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-medium text-[#e2e4ed] truncate font-mono">{project.path}</div>
+                        {project.lang && (
+                          <div className="text-[10px] text-[#555872]">{project.lang}</div>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-[#555872] bg-[#161822] rounded-lg p-3">
+                  该环境下暂无注册项目。请先在"项目"标签页添加项目。
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={onClose}
+            className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130]"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!selectedAgent || (selectedAgentConfig?.needsProject && !selectedProject)}
+            className="flex-1 px-3 py-2 bg-[#E8915A] rounded text-sm hover:bg-[#D46A28] disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            启动会话
           </button>
         </div>
       </div>
