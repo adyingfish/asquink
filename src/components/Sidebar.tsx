@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Server, Plus, Settings, Terminal, AlertCircle, ChevronRight, Folder, MessageSquare } from 'lucide-react'
+import { Server, Plus, Terminal, AlertCircle, ChevronRight, Folder, MessageSquare } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
-import SettingsModal from './SettingsModal'
 import type { Session, Env, Project } from '../App'
 
 interface SidebarProps {
@@ -28,7 +27,6 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
   const [showAddProject, setShowAddProject] = useState(false)
   const [showAgentSelect, setShowAgentSelect] = useState<{ env: Env; project?: Project } | null>(null)
   const [showPasswordPrompt, setShowPasswordPrompt] = useState<string | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [envStatuses, setEnvStatuses] = useState<Record<string, string>>({})
@@ -370,23 +368,6 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
           <Plus size={14} /> 新建会话
         </button>
       </div>
-
-      {/* Settings */}
-      <div className="p-2 border-t border-[#1e2130]">
-        <button
-          onClick={() => setShowSettings(true)}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-[#555872] hover:bg-[#161822] hover:text-[#8b8fa7] transition-colors"
-        >
-          <Settings size={16} />
-          Settings
-        </button>
-      </div>
-
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-      />
 
       {/* Add Server Modal */}
       {showAddServer && (
