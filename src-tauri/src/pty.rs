@@ -165,7 +165,10 @@ impl TerminalSession for PtySession {
 
 fn detect_default_shell() -> String {
     if cfg!(target_os = "windows") {
-        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        // Prefer PowerShell Core (pwsh) if available, otherwise use Windows PowerShell
+        which::which("pwsh").ok().map(|_| "pwsh".to_string())
+            .or_else(|| which::which("powershell").ok().map(|_| "powershell".to_string()))
+            .unwrap_or_else(|| "powershell.exe".to_string())
     } else {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
     }
