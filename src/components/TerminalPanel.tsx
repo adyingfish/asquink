@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { listen, Event } from '@tauri-apps/api/event'
@@ -12,7 +12,7 @@ interface TerminalPanelProps {
   onSessionStatusChange?: (id: string, status: Session['status']) => void
 }
 
-export default function TerminalPanel({ sessions, activeSessionId, onSessionStatusChange }: TerminalPanelProps) {
+export default function TerminalPanel({ sessions, activeSessionId }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)

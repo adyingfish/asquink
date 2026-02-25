@@ -23,6 +23,36 @@ pub struct AppState {
     ssh_sessions: Arc<Mutex<HashMap<String, SshSession>>>,
 }
 
+// New unified Env structure
+#[derive(serde::Serialize)]
+pub struct Env {
+    id: String,
+    name: String,
+    #[serde(rename = "type")]
+    env_type: String,
+    host: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    auth_type: Option<String>,
+    icon: Option<String>,
+    status: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateEnvRequest {
+    name: String,
+    #[serde(rename = "type")]
+    env_type: String,
+    host: Option<String>,
+    port: Option<u16>,
+    username: Option<String>,
+    auth_type: Option<String>,
+    private_key_path: Option<String>,
+    passphrase: Option<String>,
+    icon: Option<String>,
+}
+
+// Legacy Server structure for backward compatibility
 #[derive(serde::Serialize)]
 pub struct Server {
     id: String,
@@ -57,22 +87,40 @@ pub struct AgentStatus {
     version: Option<String>,
 }
 
+// Project structure
+#[derive(serde::Serialize)]
+pub struct Project {
+    id: String,
+    name: String,
+    path: String,
+    env_id: String,
+    lang: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateProjectRequest {
+    name: String,
+    path: String,
+    env_id: String,
+    lang: Option<String>,
+}
+
 // Initialize database on app start
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_handle = app.handle();
     let app_dir = app_handle.path().app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
-    
+
     let db_path = app_dir.join("agenthub.db");
     let db_url = format!("sqlite:{}?mode=rwc", db_path.to_str().unwrap());
     let db = tauri::async_runtime::block_on(Database::new(&db_url))?;
-    
+
     let state = AppState {
         db,
         pty_manager: PtyManager::new(),
         ssh_sessions: Arc::new(Mutex::new(HashMap::new())),
     };
-    
+
     app.manage(Arc::new(Mutex::new(state)));
     Ok(())
 }
@@ -96,7 +144,63 @@ async fn delete_api_key(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), St
     state.db.delete_setting("anthropic_api_key").await.map_err(|e| e.to_string())
 }
 
-// Server management commands
+// Environment management commands
+#[tauri::command]
+async fn list_envs(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Env>, String> {
+    let state = state.lock().await;
+    state.db.list_envs().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn create_env(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    req: CreateEnvRequest,
+) -> Result<String, String> {
+    let state = state.lock().await;
+    let id = uuid::Uuid::new_v4().to_string();
+    state.db.create_env(&id, &req).await.map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn delete_env(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.delete_env(&id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn check_env_status(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Result<String, String> {
+    let state = state.lock().await;
+
+    // Get env config
+    let env = state.db.get_env(&id).await.map_err(|e| e.to_string())?;
+
+    let status = if env.env_type == "local" {
+        // Local environment is always online
+        "online".to_string()
+    } else {
+        // SSH environment - try TCP connection test
+        let host = env.host.clone().unwrap_or_default();
+        let port = env.port.unwrap_or(22);
+
+        // Use tokio to attempt a TCP connection with timeout
+        let addr = format!("{}:{}", host, port);
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            tokio::net::TcpStream::connect(&addr)
+        ).await {
+            Ok(Ok(_)) => "online",
+            _ => "offline",
+        }.to_string()
+    };
+
+    // Update status in database
+    state.db.update_env_status(&id, &status).await.map_err(|e| e.to_string())?;
+
+    Ok(status)
+}
+
+// Legacy Server management commands (for backward compatibility)
 #[tauri::command]
 async fn list_servers(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Server>, String> {
     let state = state.lock().await;
@@ -120,6 +224,40 @@ async fn delete_server(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Re
     state.db.delete_server(&id).await.map_err(|e| e.to_string())
 }
 
+// Project management commands
+#[tauri::command]
+async fn list_projects(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<Project>, String> {
+    let state = state.lock().await;
+    state.db.list_projects().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn create_project(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    req: CreateProjectRequest,
+) -> Result<String, String> {
+    let state = state.lock().await;
+    let id = uuid::Uuid::new_v4().to_string();
+    state.db.create_project(&id, &req).await.map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+async fn update_project(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    id: String,
+    req: CreateProjectRequest,
+) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.update_project(&id, &req).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_project(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.delete_project(&id).await.map_err(|e| e.to_string())
+}
+
 // Agent management commands
 #[tauri::command]
 async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
@@ -128,7 +266,7 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
         .output()
         .await
         .map_err(|e| e.to_string())?;
-    
+
     let installed = output.status.success();
     let version = if installed {
         // Try to get version
@@ -137,7 +275,7 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
             .output()
             .await
             .ok();
-        
+
         version_output.and_then(|o| {
             if o.status.success() {
                 String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
@@ -148,7 +286,7 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
     } else {
         None
     };
-    
+
     Ok(AgentStatus { installed, version })
 }
 
@@ -164,19 +302,19 @@ async fn launch_agent(
     let api_key = state.db.get_setting("anthropic_api_key").await
         .map_err(|e| e.to_string())?
         .ok_or("API key not configured. Please set it in Settings.")?;
-    
+
     // Prepare launch command with environment variables
     let mut cmd = format!("export ANTHROPIC_API_KEY='{}'; ", api_key);
-    
+
     // Change to working directory if specified
     if let Some(dir) = working_dir {
         cmd.push_str(&format!("cd {}; ", dir));
     }
-    
+
     // Launch agent
     cmd.push_str(&agent);
     cmd.push_str("\n");
-    
+
     // Write to session
     state.pty_manager.write(&session_id, cmd.as_bytes()).await.map_err(|e| e.to_string())
 }
@@ -203,33 +341,37 @@ async fn create_ssh_session(
 ) -> Result<String, String> {
     let state = state.lock().await;
 
-    // Get server config from database
-    let server = state.db.get_server(&req.server_id).await.map_err(|e| e.to_string())?;
-    
+    // Get server/env config from database
+    let env = state.db.get_env(&req.server_id).await.map_err(|e| e.to_string())?;
+
     // Determine auth method
-    let auth = if server.auth_type == "password" {
+    let auth = if env.auth_type.as_deref() == Some("password") {
         match req.password {
             Some(pwd) => SshAuth::Password(pwd),
             None => return Err("Password required".to_string()),
         }
     } else {
-        let key_path = server.private_key_path.ok_or("Private key path not configured")?;
+        let key_path = env.private_key_path.ok_or("Private key path not configured")?;
         SshAuth::PrivateKey {
             path: key_path,
-            passphrase: server.passphrase,
+            passphrase: env.passphrase,
         }
     };
-    
+
+    let host = env.host.ok_or("Host not configured")?;
+    let port = env.port.unwrap_or(22);
+    let username = env.username.ok_or("Username not configured")?;
+
     // Create SSH session
     let session = SshSession::connect(
         session_id.clone(),
-        &server.host,
-        server.port,
-        &server.username,
+        &host,
+        port,
+        &username,
         auth,
         app_handle,
     ).await.map_err(|e| e.to_string())?;
-    
+
     state.ssh_sessions.lock().await.insert(session_id.clone(), session);
     Ok(session_id)
 }
@@ -242,7 +384,7 @@ async fn write_to_session(
     data: String,
 ) -> Result<(), String> {
     let state = state.lock().await;
-    
+
     if session_type == "local" {
         state.pty_manager.write(&session_id, data.as_bytes()).await.map_err(|e| e.to_string())
     } else if session_type == "ssh" {
@@ -266,7 +408,7 @@ async fn resize_session(
     rows: u16,
 ) -> Result<(), String> {
     let state = state.lock().await;
-    
+
     if session_type == "local" {
         state.pty_manager.resize(&session_id, cols, rows).await.map_err(|e| e.to_string())
     } else if session_type == "ssh" {
@@ -288,7 +430,7 @@ async fn close_session(
     session_type: String,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
-    
+
     if session_type == "local" {
         state.pty_manager.close_session(&session_id).await.map_err(|e| e.to_string())
     } else if session_type == "ssh" {
@@ -312,10 +454,20 @@ fn main() {
             save_api_key,
             get_api_key,
             delete_api_key,
-            // Servers
+            // Environments (new)
+            list_envs,
+            create_env,
+            delete_env,
+            check_env_status,
+            // Servers (legacy)
             list_servers,
             create_server,
             delete_server,
+            // Projects
+            list_projects,
+            create_project,
+            update_project,
+            delete_project,
             // Agents
             check_agent_installed,
             launch_agent,

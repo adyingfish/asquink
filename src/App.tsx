@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TerminalPanel from './components/TerminalPanel'
@@ -6,8 +7,31 @@ import TerminalPanel from './components/TerminalPanel'
 export interface Session {
   id: string
   name: string
-  type: 'local' | 'ssh' | 'wsl'
+  type: 'local' | 'ssh'
+  envId?: string          // Associated environment ID
+  projectId?: string      // Reserved for project association
+  agentId?: string        // Associated Agent
   status: 'connecting' | 'connected' | 'disconnected'
+}
+
+export interface Env {
+  id: string
+  name: string
+  type: 'local' | 'ssh'
+  host?: string
+  port?: number
+  username?: string
+  auth_type?: string
+  icon?: string
+  status: 'online' | 'offline'
+}
+
+export interface Project {
+  id: string
+  name: string
+  path: string
+  env_id: string
+  lang?: string
 }
 
 function App() {
@@ -20,12 +44,24 @@ function App() {
   }
 
   const updateSessionStatus = (id: string, status: Session['status']) => {
-    setSessions(prev => prev.map(s => 
+    setSessions(prev => prev.map(s =>
       s.id === id ? { ...s, status } : s
     ))
   }
 
-  const closeSession = (id: string) => {
+  const closeSession = async (id: string) => {
+    const session = sessions.find(s => s.id === id)
+    if (session) {
+      try {
+        await invoke('close_session', {
+          sessionId: id,
+          sessionType: session.type,
+        })
+      } catch (error) {
+        console.error('Failed to close session:', error)
+      }
+    }
+
     const newSessions = sessions.filter(s => s.id !== id)
     setSessions(newSessions)
     if (activeSessionId === id) {

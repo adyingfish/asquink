@@ -4,16 +4,27 @@ pub struct Database {
     pool: Pool<Sqlite>,
 }
 
-#[derive(Debug)]
-pub struct ServerConfig {
+#[derive(Debug, Clone)]
+pub struct EnvConfig {
     pub id: String,
     pub name: String,
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub auth_type: String,
+    pub env_type: String, // "local" | "ssh"
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub username: Option<String>,
+    pub auth_type: Option<String>,
     pub private_key_path: Option<String>,
     pub passphrase: Option<String>,
+    pub icon: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectConfig {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub env_id: String,
+    pub lang: Option<String>,
 }
 
 impl Database {
@@ -22,25 +33,28 @@ impl Database {
             .max_connections(5)
             .connect(database_url)
             .await?;
-        
+
         let db = Self { pool };
         db.init().await?;
         Ok(db)
     }
-    
+
     async fn init(&self) -> Result<(), sqlx::Error> {
+        // Create envs table (new unified environment table)
         sqlx::query(
             r#"
-            CREATE TABLE IF NOT EXISTS servers (
+            CREATE TABLE IF NOT EXISTS envs (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                host TEXT NOT NULL,
-                port INTEGER NOT NULL DEFAULT 22,
-                username TEXT NOT NULL,
-                auth_type TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'ssh',
+                host TEXT,
+                port INTEGER,
+                username TEXT,
+                auth_type TEXT,
                 private_key_path TEXT,
                 passphrase TEXT,
-                group_name TEXT,
+                icon TEXT,
+                status TEXT DEFAULT 'offline',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_connected DATETIME
             )
@@ -48,7 +62,14 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
+        // Migrate from servers table to envs table if servers exists
+        self.migrate_servers_to_envs().await?;
+
+        // Ensure default local environment exists
+        self.ensure_local_env().await?;
+
+        // Create agents table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS agents (
@@ -66,25 +87,27 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
-        
+
+        // Create sessions table (updated to reference envs)
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
-                server_id TEXT,
+                env_id TEXT,
                 env_type TEXT NOT NULL,
                 agent_id TEXT,
                 working_dir TEXT,
                 started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 ended_at DATETIME,
-                FOREIGN KEY (server_id) REFERENCES servers(id),
+                FOREIGN KEY (env_id) REFERENCES envs(id),
                 FOREIGN KEY (agent_id) REFERENCES agents(id)
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
-        
+
+        // Create settings table
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS settings (
@@ -96,17 +119,116 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Create projects table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                env_id TEXT NOT NULL,
+                lang TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (env_id) REFERENCES envs(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create messages table (for chat view)
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS messages (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                text TEXT,
+                parts TEXT,
+                thinking TEXT,
+                tokens TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Insert built-in agents
         self.init_builtin_agents().await?;
 
         Ok(())
     }
-    
+
+    async fn migrate_servers_to_envs(&self) -> Result<(), sqlx::Error> {
+        // Check if servers table exists
+        let servers_exists: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='servers'"
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        if servers_exists == 0 {
+            return Ok(());
+        }
+
+        // Check if envs table is empty (migration not done yet)
+        let envs_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM envs")
+            .fetch_one(&self.pool)
+            .await?;
+
+        if envs_count > 0 {
+            // Migration already done, drop old servers table
+            sqlx::query("DROP TABLE IF EXISTS servers")
+                .execute(&self.pool)
+                .await?;
+            return Ok(());
+        }
+
+        // Migrate data from servers to envs
+        sqlx::query(
+            r#"
+            INSERT INTO envs (id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon, status, created_at, last_connected)
+            SELECT id, name, 'ssh', host, port, username, auth_type, private_key_path, passphrase, 'cloud', 'offline', created_at, last_connected
+            FROM servers
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Drop old servers table
+        sqlx::query("DROP TABLE servers")
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    async fn ensure_local_env(&self) -> Result<(), sqlx::Error> {
+        let local_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM envs WHERE id = 'local'")
+            .fetch_one(&self.pool)
+            .await?;
+
+        if local_exists == 0 {
+            sqlx::query(
+                r#"
+                INSERT INTO envs (id, name, type, icon, status)
+                VALUES ('local', 'Local Terminal', 'local', 'terminal', 'online')
+                "#,
+            )
+            .execute(&self.pool)
+            .await?;
+        }
+
+        Ok(())
+    }
+
     async fn init_builtin_agents(&self) -> Result<(), sqlx::Error> {
         let claude_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE id = 'claude'")
             .fetch_one(&self.pool)
             .await?;
-        
+
         if claude_exists == 0 {
             sqlx::query(
                 r#"
@@ -117,66 +239,117 @@ impl Database {
             .execute(&self.pool)
             .await?;
         }
-        
+
         Ok(())
     }
-    
-    pub async fn list_servers(&self) -> Result<Vec<crate::Server>, sqlx::Error> {
-        let servers = sqlx::query_as::<_, crate::Server>(
-            "SELECT id, name, host, port, username, auth_type FROM servers ORDER BY created_at DESC"
+
+    pub async fn list_envs(&self) -> Result<Vec<crate::Env>, sqlx::Error> {
+        let envs = sqlx::query_as::<_, crate::Env>(
+            "SELECT id, name, type, host, port, username, auth_type, icon, status FROM envs ORDER BY created_at DESC"
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(servers)
+        Ok(envs)
     }
-    
-    pub async fn get_server(&self, id: &str) -> Result<ServerConfig, sqlx::Error> {
+
+    pub async fn get_env(&self, id: &str) -> Result<EnvConfig, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, name, host, port, username, auth_type, private_key_path, passphrase FROM servers WHERE id = ?1"
+            "SELECT id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon FROM envs WHERE id = ?1"
         )
         .bind(id)
         .fetch_one(&self.pool)
         .await?;
-        
+
         use sqlx::Row;
-        Ok(ServerConfig {
+        Ok(EnvConfig {
             id: row.try_get("id")?,
             name: row.try_get("name")?,
+            env_type: row.try_get("type")?,
             host: row.try_get("host")?,
-            port: row.try_get::<i64, _>("port")? as u16,
+            port: row.try_get::<Option<i64>, _>("port")?.map(|p| p as u16),
             username: row.try_get("username")?,
             auth_type: row.try_get("auth_type")?,
             private_key_path: row.try_get("private_key_path")?,
             passphrase: row.try_get("passphrase")?,
+            icon: row.try_get("icon")?,
         })
     }
-    
-    pub async fn create_server(&self, id: &str, req: &crate::CreateServerRequest) -> Result<(), sqlx::Error> {
+
+    pub async fn create_env(&self, id: &str, req: &crate::CreateEnvRequest) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO servers (id, name, host, port, username, auth_type, private_key_path, passphrase)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            INSERT INTO envs (id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'offline')
             "#,
         )
         .bind(id)
         .bind(&req.name)
+        .bind(&req.env_type)
         .bind(&req.host)
         .bind(req.port)
         .bind(&req.username)
         .bind(&req.auth_type)
         .bind(&req.private_key_path)
         .bind(&req.passphrase)
+        .bind(&req.icon)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
-    
-    pub async fn delete_server(&self, id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("DELETE FROM servers WHERE id = ?1")
+
+    pub async fn update_env_status(&self, id: &str, status: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE envs SET status = ?1 WHERE id = ?2")
+            .bind(status)
             .bind(id)
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn delete_env(&self, id: &str) -> Result<(), sqlx::Error> {
+        // Prevent deleting the default local environment
+        if id == "local" {
+            return Err(sqlx::Error::RowNotFound);
+        }
+        sqlx::query("DELETE FROM envs WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // Legacy methods for backward compatibility
+    pub async fn list_servers(&self) -> Result<Vec<crate::Server>, sqlx::Error> {
+        // Return SSH envs as servers for backward compatibility
+        let envs = sqlx::query_as::<_, crate::Server>(
+            "SELECT id, name, host, port, username, auth_type FROM envs WHERE type = 'ssh' ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(envs)
+    }
+
+    pub async fn get_server(&self, id: &str) -> Result<EnvConfig, sqlx::Error> {
+        self.get_env(id).await
+    }
+
+    pub async fn create_server(&self, id: &str, req: &crate::CreateServerRequest) -> Result<(), sqlx::Error> {
+        let env_req = crate::CreateEnvRequest {
+            name: req.name.clone(),
+            env_type: "ssh".to_string(),
+            host: Some(req.host.clone()),
+            port: Some(req.port),
+            username: Some(req.username.clone()),
+            auth_type: Some(req.auth_type.clone()),
+            private_key_path: req.private_key_path.clone(),
+            passphrase: req.passphrase.clone(),
+            icon: Some("cloud".to_string()),
+        };
+        self.create_env(id, &env_req).await
+    }
+
+    pub async fn delete_server(&self, id: &str) -> Result<(), sqlx::Error> {
+        self.delete_env(id).await
     }
 
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
@@ -207,6 +380,92 @@ impl Database {
             .await?;
         Ok(())
     }
+
+    // Project management methods
+    pub async fn list_projects(&self) -> Result<Vec<crate::Project>, sqlx::Error> {
+        let projects = sqlx::query_as::<_, crate::Project>(
+            "SELECT id, name, path, env_id, lang FROM projects ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(projects)
+    }
+
+    pub async fn get_project(&self, id: &str) -> Result<ProjectConfig, sqlx::Error> {
+        let row = sqlx::query(
+            "SELECT id, name, path, env_id, lang FROM projects WHERE id = ?1"
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        use sqlx::Row;
+        Ok(ProjectConfig {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            path: row.try_get("path")?,
+            env_id: row.try_get("env_id")?,
+            lang: row.try_get("lang")?,
+        })
+    }
+
+    pub async fn create_project(&self, id: &str, req: &crate::CreateProjectRequest) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO projects (id, name, path, env_id, lang)
+            VALUES (?1, ?2, ?3, ?4, ?5)
+            "#,
+        )
+        .bind(id)
+        .bind(&req.name)
+        .bind(&req.path)
+        .bind(&req.env_id)
+        .bind(&req.lang)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_project(&self, id: &str, req: &crate::CreateProjectRequest) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE projects SET name = ?1, path = ?2, env_id = ?3, lang = ?4 WHERE id = ?5
+            "#,
+        )
+        .bind(&req.name)
+        .bind(&req.path)
+        .bind(&req.env_id)
+        .bind(&req.lang)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_project(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM projects WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for crate::Env {
+    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(crate::Env {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            env_type: row.try_get("type")?,
+            host: row.try_get("host")?,
+            port: row.try_get::<Option<i64>, _>("port")?.map(|p| p as u16),
+            username: row.try_get("username")?,
+            auth_type: row.try_get("auth_type")?,
+            icon: row.try_get("icon")?,
+            status: row.try_get("status")?,
+        })
+    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for crate::Server {
@@ -219,6 +478,19 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for crate::Server {
             port: row.try_get::<i64, _>("port")? as u16,
             username: row.try_get("username")?,
             auth_type: row.try_get("auth_type")?,
+        })
+    }
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for crate::Project {
+    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(crate::Project {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            path: row.try_get("path")?,
+            env_id: row.try_get("env_id")?,
+            lang: row.try_get("lang")?,
         })
     }
 }
