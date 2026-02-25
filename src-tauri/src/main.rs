@@ -448,6 +448,7 @@ async fn close_session(
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .setup(setup_app)
         .invoke_handler(tauri::generate_handler![
             // API Key

@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { listen, Event } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { writeText, readText } from '@tauri-apps/plugin-clipboard-manager'
 import '@xterm/xterm/css/xterm.css'
 import type { Session } from '../App'
 
@@ -68,8 +69,8 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       if (domEvent.ctrlKey && domEvent.key === 'c') {
         const selection = terminal.getSelection()
         if (selection) {
-          // Copy to clipboard
-          navigator.clipboard.writeText(selection).catch(console.error)
+          // Copy to clipboard using Tauri API
+          writeText(selection).catch(console.error)
           domEvent.preventDefault()
           return
         }
@@ -79,7 +80,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       // Ctrl+V: Paste from clipboard
       if (domEvent.ctrlKey && domEvent.key === 'v') {
         domEvent.preventDefault()
-        navigator.clipboard.readText().then(text => {
+        readText().then(text => {
           if (text && activeSession?.status === 'connected' && currentSessionId) {
             invoke('write_to_session', {
               sessionId: currentSessionId,
