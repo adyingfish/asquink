@@ -3,6 +3,7 @@ use anyhow::Result;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
+#[allow(dead_code)]
 pub enum SessionStatus {
     Connecting,
     Connected,
@@ -22,8 +23,10 @@ pub trait TerminalSession: Send + Sync {
     async fn close(&mut self) -> Result<()>;
     
     /// Get current status
+    #[allow(dead_code)]
     fn status(&self) -> SessionStatus;
-    
+
     /// Get session type
+    #[allow(dead_code)]
     fn session_type(&self) -> &'static str;
 }

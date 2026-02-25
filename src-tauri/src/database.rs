@@ -5,6 +5,7 @@ pub struct Database {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct EnvConfig {
     pub id: String,
     pub name: String,
@@ -19,6 +20,7 @@ pub struct EnvConfig {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ProjectConfig {
     pub id: String,
     pub name: String,
@@ -329,6 +331,7 @@ impl Database {
         Ok(envs)
     }
 
+    #[allow(dead_code)]
     pub async fn get_server(&self, id: &str) -> Result<EnvConfig, sqlx::Error> {
         self.get_env(id).await
     }
@@ -391,6 +394,7 @@ impl Database {
         Ok(projects)
     }
 
+    #[allow(dead_code)]
     pub async fn get_project(&self, id: &str) -> Result<ProjectConfig, sqlx::Error> {
         let row = sqlx::query(
             "SELECT id, name, path, env_id, lang FROM projects WHERE id = ?1"

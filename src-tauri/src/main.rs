@@ -70,6 +70,7 @@ pub struct CreateServerRequest {
     port: u16,
     username: String,
     auth_type: String,
+    #[allow(dead_code)]
     password: Option<String>,
     private_key_path: Option<String>,
     passphrase: Option<String>,
@@ -431,7 +432,7 @@ async fn close_session(
     session_id: String,
     session_type: String,
 ) -> Result<(), String> {
-    let mut state = state.lock().await;
+    let state = state.lock().await;
 
     if session_type == "local" {
         state.pty_manager.close_session(&session_id).await.map_err(|e| e.to_string())

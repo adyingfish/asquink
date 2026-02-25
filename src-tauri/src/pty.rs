@@ -14,6 +14,7 @@ pub struct PtyManager {
 }
 
 pub struct PtySession {
+    #[allow(dead_code)]
     id: String,
     master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
@@ -57,7 +58,8 @@ impl PtyManager {
         Ok(())
     }
     
-    pub async fn get_session(&self, id: &str) -> Option<Box<dyn TerminalSession>> {
+    #[allow(dead_code)]
+    pub async fn get_session(&self, _id: &str) -> Option<Box<dyn TerminalSession>> {
         // This is a simplification - proper implementation needs to return a reference
         None
     }
