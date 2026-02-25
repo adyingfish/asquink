@@ -18,6 +18,16 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const fitAddonRef = useRef<FitAddon | null>(null)
   const unlistenRef = useRef<(() => void) | null>(null)
 
+  // Refs to track latest values for clipboard handlers
+  const sessionsRef = useRef(sessions)
+  const activeSessionIdRef = useRef(activeSessionId)
+
+  // Keep refs updated
+  useEffect(() => {
+    sessionsRef.current = sessions
+    activeSessionIdRef.current = activeSessionId
+  }, [sessions, activeSessionId])
+
   // Initialize terminal
   useEffect(() => {
     if (!containerRef.current) return
@@ -48,6 +58,38 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     terminal.open(containerRef.current)
     fitAddon.fit()
+
+    // Handle clipboard shortcuts (Ctrl+C, Ctrl+V)
+    terminal.onKey(({ domEvent }) => {
+      const currentSessionId = activeSessionIdRef.current
+      const activeSession = sessionsRef.current.find(s => s.id === currentSessionId)
+
+      // Ctrl+C: Copy if selection exists, otherwise send interrupt
+      if (domEvent.ctrlKey && domEvent.key === 'c') {
+        const selection = terminal.getSelection()
+        if (selection) {
+          // Copy to clipboard
+          navigator.clipboard.writeText(selection).catch(console.error)
+          domEvent.preventDefault()
+          return
+        }
+        // No selection - let it through as interrupt signal (Ctrl+C)
+      }
+
+      // Ctrl+V: Paste from clipboard
+      if (domEvent.ctrlKey && domEvent.key === 'v') {
+        domEvent.preventDefault()
+        navigator.clipboard.readText().then(text => {
+          if (text && activeSession?.status === 'connected' && currentSessionId) {
+            invoke('write_to_session', {
+              sessionId: currentSessionId,
+              sessionType: activeSession.type,
+              data: text,
+            }).catch(console.error)
+          }
+        }).catch(console.error)
+      }
+    })
 
     // Write welcome message
     terminal.writeln('\x1b[1;34m╔══════════════════════════════════════╗\x1b[0m')
