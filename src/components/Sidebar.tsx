@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Server, Plus, Terminal, AlertCircle, ChevronRight, Folder, MessageSquare } from 'lucide-react'
+import { Server, Plus, Terminal, AlertCircle, Folder, MessageSquare } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Session, Env, Project } from '../App'
 
@@ -85,8 +85,10 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
   }
 
   // 创建本地会话（带 Agent 和可选项目）
-  const createLocalSessionWithAgent = async (env: Env, agentId: string, projectId?: string) => {
+  const createLocalSessionWithAgent = async (env: Env, agentId: string, projectId?: string, projectPath?: string) => {
     const id = `local-${Date.now()}`
+    const agent = AGENTS.find(a => a.id === agentId)
+
     onAddSession({
       id,
       name: env.name,
@@ -94,7 +96,10 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
       envId: env.id,
       agentId,
       projectId,
-      status: 'connecting'
+      projectPath,
+      status: 'connecting',
+      mode: agent?.needsProject === false ? 'chat' : 'terminal',
+      statusText: '连接中...',
     })
 
     try {
@@ -113,8 +118,10 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
   }
 
   // 创建 SSH 会话（带 Agent 和可选项目）
-  const createSshSessionWithAgent = async (env: Env, agentId: string, projectId?: string, pwd?: string | null) => {
+  const createSshSessionWithAgent = async (env: Env, agentId: string, projectId?: string, projectPath?: string, pwd?: string | null) => {
     const sessionId = `ssh-${Date.now()}`
+    const agent = AGENTS.find(a => a.id === agentId)
+
     onAddSession({
       id: sessionId,
       name: env.name,
@@ -122,7 +129,10 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
       envId: env.id,
       agentId,
       projectId,
-      status: 'connecting'
+      projectPath,
+      status: 'connecting',
+      mode: agent?.needsProject === false ? 'chat' : 'terminal',
+      statusText: '连接中...',
     })
 
     try {
@@ -144,16 +154,16 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
   }
 
   // 创建会话的主入口
-  const createSessionWithAgent = async (env: Env, agentId: string, projectId?: string) => {
+  const createSessionWithAgent = async (env: Env, agentId: string, projectId?: string, projectPath?: string) => {
     if (env.type === 'local') {
-      await createLocalSessionWithAgent(env, agentId, projectId)
+      await createLocalSessionWithAgent(env, agentId, projectId, projectPath)
     } else if (env.auth_type === 'password') {
       // 需要密码，先保存选择，显示密码输入
       setShowPasswordPrompt(env.id)
       // 保存待创建的会话信息
-      sessionStorage.setItem('pending_session', JSON.stringify({ envId: env.id, agentId, projectId }))
+      sessionStorage.setItem('pending_session', JSON.stringify({ envId: env.id, agentId, projectId, projectPath }))
     } else {
-      await createSshSessionWithAgent(env, agentId, projectId, null)
+      await createSshSessionWithAgent(env, agentId, projectId, projectPath, null)
     }
   }
 
@@ -399,8 +409,8 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
           projects={projects}
           preselectedProject={showAgentSelect.project}
           onClose={() => setShowAgentSelect(null)}
-          onSelectAgent={(agentId, projectId) => {
-            createSessionWithAgent(showAgentSelect!.env, agentId, projectId)
+          onSelectAgent={(agentId, projectId, projectPath) => {
+            createSessionWithAgent(showAgentSelect!.env, agentId, projectId, projectPath)
             setShowAgentSelect(null)
           }}
         />
@@ -422,8 +432,8 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
                   const env = envs.find(e => e.id === showPasswordPrompt)
                   const pending = sessionStorage.getItem('pending_session')
                   if (env && pending) {
-                    const { agentId, projectId } = JSON.parse(pending)
-                    createSshSessionWithAgent(env, agentId, projectId, password)
+                    const { agentId, projectId, projectPath } = JSON.parse(pending)
+                    createSshSessionWithAgent(env, agentId, projectId, projectPath, password)
                     sessionStorage.removeItem('pending_session')
                   }
                 }
@@ -445,8 +455,8 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
                   const env = envs.find(e => e.id === showPasswordPrompt)
                   const pending = sessionStorage.getItem('pending_session')
                   if (env && pending) {
-                    const { agentId, projectId } = JSON.parse(pending)
-                    createSshSessionWithAgent(env, agentId, projectId, password)
+                    const { agentId, projectId, projectPath } = JSON.parse(pending)
+                    createSshSessionWithAgent(env, agentId, projectId, projectPath, password)
                     sessionStorage.removeItem('pending_session')
                   }
                 }}
@@ -462,7 +472,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
   )
 }
 
-// Session group component for the sessions tab
+// Session group component for the sessions tab - matches v7 design
 function EnvSessionGroup({
   env,
   sessions,
@@ -478,67 +488,184 @@ function EnvSessionGroup({
   onToggle: () => void
   onSelectSession: (id: string) => void
 }) {
-  const getAgentColor = (session: Session) => {
-    const agent = AGENTS.find(a => a.id === session.agentId)
-    return agent?.color || '#555872'
+  const getAgentConfig = (session: Session) => {
+    return AGENTS.find(a => a.id === session.agentId)
   }
 
-  const getSessionName = (session: Session) => {
-    if (session.projectId) {
-      return session.projectId // Would be project name in future
-    }
-    const agent = AGENTS.find(a => a.id === session.agentId)
-    return agent?.name || session.name
+  const getEnvIcon = () => {
+    if (env.type === 'local') return '💻'
+    return '☁️'
   }
+
+  const getEnvDetail = () => {
+    if (env.type === 'local') return 'Local Machine'
+    if (env.host && env.username) return `${env.username}@${env.host}`
+    if (env.host) return env.host
+    return env.name
+  }
+
+  const online = env.status === 'online'
 
   return (
     <div className="mb-1">
+      {/* Environment header */}
       <div
-        onClick={onToggle}
-        className="flex items-center gap-1.5 px-2 py-1.5 rounded cursor-pointer text-[11px] text-[#8b8fa7] hover:bg-[#161822]"
+        onClick={() => online && onToggle()}
+        className="flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors"
+        style={{ opacity: online ? 1 : 0.4 }}
+        onMouseEnter={(e) => {
+          if (online) e.currentTarget.style.background = '#222738'
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = 'transparent'
+        }}
       >
-        <ChevronRight
-          size={10}
-          className={`transition-transform ${expanded ? 'rotate-90' : ''}`}
-        />
-        <span className="text-xs">{env.type === 'local' ? '💻' : '☁️'}</span>
-        <span className="font-medium flex-1">{env.name}</span>
-        <span className="text-[9px] font-mono bg-[#232738] text-[#555872] px-1 rounded">
-          {sessions.length}
+        {/* Expand arrow */}
+        <span
+          className="text-[9px] text-[#4e5270] w-3 text-center transition-transform duration-150"
+          style={{ transform: expanded && online ? 'rotate(90deg)' : 'none' }}
+        >
+          ▶
         </span>
+
+        {/* Environment icon */}
+        <span className="text-base">{getEnvIcon()}</span>
+
+        {/* Environment info */}
+        <div className="flex-1 min-w-0">
+          <div className="text-[12.5px] font-medium text-[#e2e4ed] truncate">
+            {env.name}
+          </div>
+          <div className="text-[10px] text-[#4e5270] font-mono truncate">
+            {getEnvDetail()}
+          </div>
+        </div>
+
+        {/* Session count badge */}
+        {sessions.length > 0 && (
+          <span className="text-[9px] font-mono bg-[#1b1f2b] text-[#4e5270] px-1.5 py-0.5 rounded">
+            {sessions.length}
+          </span>
+        )}
+
+        {/* Online status dot */}
+        <div
+          className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+          style={{
+            background: online ? '#4ADE80' : '#4e5270',
+            boxShadow: online ? '0 0 6px #4ADE80' : 'none',
+          }}
+        />
       </div>
-      {expanded && (
-        <div className="pl-5">
-          {sessions.map(session => (
-            <div
-              key={session.id}
-              onClick={() => onSelectSession(session.id)}
-              className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer mb-0.5 ${
-                activeSessionId === session.id
-                  ? 'bg-[#E8915A]/10 border-l-2 border-[#E8915A]'
-                  : 'hover:bg-[#161822] border-l-2 border-transparent'
-              }`}
-            >
+
+      {/* Sessions list */}
+      {expanded && online && (
+        <div className="pl-4 mt-1">
+          {sessions.map((session) => {
+            const isActive = activeSessionId === session.id
+            const agent = getAgentConfig(session)
+            const isProject = !!session.projectId
+
+            return (
               <div
-                className="w-1.5 h-1.5 rounded-full"
-                style={{ backgroundColor: getAgentColor(session) }}
-              />
-              <div className="flex-1 min-w-0">
-                <div className="text-xs font-medium truncate text-[#e2e4ed]">
-                  {getSessionName(session)}
-                </div>
-              </div>
-              <span
-                className="text-[8px] px-1 rounded"
+                key={session.id}
+                onClick={() => onSelectSession(session.id)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer mb-0.5 transition-colors"
                 style={{
-                  backgroundColor: session.projectId ? 'rgba(96, 165, 250, 0.1)' : 'rgba(192, 132, 252, 0.1)',
-                  color: session.projectId ? '#60A5FA' : '#C084FC'
+                  background: isActive ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
+                  borderLeft: isActive ? '2.5px solid #E8915A' : '2.5px solid transparent',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) e.currentTarget.style.background = '#222738'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = isActive ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
                 }}
               >
-                {session.projectId ? '📁' : '💬'}
-              </span>
-            </div>
-          ))}
+                {/* Agent color dot + status dot */}
+                <div className="relative flex-shrink-0">
+                  <div
+                    className="w-2 h-2 rounded-full"
+                    style={{ background: agent?.color || '#555872' }}
+                  />
+                  <div
+                    className="absolute -bottom-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
+                    style={{
+                      background: session.status === 'connected' ? '#4ADE80' : '#4e5270',
+                      boxShadow: session.status === 'connected' ? '0 0 4px #4ADE80' : 'none',
+                    }}
+                  />
+                </div>
+
+                {/* Session info */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[12px] font-medium truncate" style={{ fontFamily: isProject ? "'JetBrains Mono', monospace" : undefined }}>
+                    {isProject ? session.projectId : (session.lastMsg || agent?.name || session.name)}
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span
+                      className="text-[10px] font-medium"
+                      style={{ color: agent?.color || '#555872' }}
+                    >
+                      {agent?.short || 'Agent'}
+                    </span>
+                    {isProject && session.projectPath && (
+                      <span className="text-[10px] text-[#4e5270] font-mono truncate">
+                        {session.projectPath}
+                      </span>
+                    )}
+                    {!isProject && (
+                      <span className="text-[10px] text-[#4e5270]">独立会话</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Mode badge & status */}
+                <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                  <span
+                    className="text-[8.5px] px-1.5 py-0.5 rounded"
+                    style={{
+                      background: session.mode === 'chat' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(96, 165, 250, 0.08)',
+                      color: session.mode === 'chat' ? '#C084FC' : '#60A5FA',
+                    }}
+                  >
+                    {session.mode === 'chat' ? '💬' : '⌨'}
+                  </span>
+                  {session.statusText && (
+                    <span className="text-[9px] text-[#4ADE80]">{session.statusText}</span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+
+          {/* New session button */}
+          <div
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-[#4e5270] cursor-pointer rounded-md transition-colors"
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = '#E8915A'
+              e.currentTarget.style.background = 'rgba(232, 145, 90, 0.08)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = '#4e5270'
+              e.currentTarget.style.background = 'transparent'
+            }}
+          >
+            <span>＋</span> 新建会话
+          </div>
+        </div>
+      )}
+
+      {/* Offline environment: reconnect hint */}
+      {!online && (
+        <div className="pl-10 mt-0.5 mb-2">
+          <span
+            className="text-[10px] text-[#4e5270] cursor-pointer"
+            onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
+            onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
+          >
+            重新连接
+          </span>
         </div>
       )}
     </div>
@@ -849,10 +976,10 @@ function AgentSelectModal({
   projects: Project[]
   preselectedProject?: Project
   onClose: () => void
-  onSelectAgent: (agentId: string, projectId?: string) => void
+  onSelectAgent: (agentId: string, projectId?: string, projectPath?: string) => void
 }) {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-  const [selectedProject, setSelectedProject] = useState<string | null>(preselectedProject?.id || null)
+  const [selectedProject, setSelectedProject] = useState<Project | null>(preselectedProject || null)
 
   const envProjects = projects.filter(p => p.env_id === env.id)
   const selectedAgentConfig = AGENTS.find(a => a.id === selectedAgent)
@@ -861,7 +988,11 @@ function AgentSelectModal({
     if (!selectedAgent) return
     const agent = AGENTS.find(a => a.id === selectedAgent)
     if (agent?.needsProject && !selectedProject) return
-    onSelectAgent(selectedAgent, selectedProject || undefined)
+    onSelectAgent(
+      selectedAgent,
+      selectedProject?.name,
+      selectedProject?.path
+    )
   }
 
   return (
@@ -914,9 +1045,9 @@ function AgentSelectModal({
                   {envProjects.map(project => (
                     <button
                       key={project.id}
-                      onClick={() => setSelectedProject(project.id)}
+                      onClick={() => setSelectedProject(project)}
                       className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-colors ${
-                        selectedProject === project.id
+                        selectedProject?.id === project.id
                           ? 'bg-[#60A5FA]/20 border border-[#60A5FA]'
                           : 'bg-[#161822] border border-transparent hover:border-[#2a2d3e]'
                       }`}

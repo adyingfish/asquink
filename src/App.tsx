@@ -9,9 +9,13 @@ export interface Session {
   name: string
   type: 'local' | 'ssh'
   envId?: string          // Associated environment ID
-  projectId?: string      // Reserved for project association
+  projectId?: string      // Project name if project-based session
+  projectPath?: string    // Project directory path
   agentId?: string        // Associated Agent
   status: 'connecting' | 'connected' | 'disconnected'
+  mode: 'terminal' | 'chat'  // View mode
+  statusText?: string     // Status description (e.g., "运行中", "对话中")
+  lastMsg?: string        // Last message or task description
 }
 
 export interface Env {
