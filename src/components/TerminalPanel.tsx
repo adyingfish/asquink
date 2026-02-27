@@ -54,6 +54,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
       cursorBlink: true,
       cursorStyle: 'block',
+      scrollback: 10000,
     })
 
     const fitAddon = new FitAddon()
@@ -61,6 +62,8 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     terminal.open(containerRef.current)
     fitAddon.fit()
+    // Ensure scrollbar is at bottom after initial render
+    terminal.scrollToBottom()
 
     // Handle clipboard shortcuts
     terminal.onKey(({ domEvent, key }) => {
@@ -183,6 +186,8 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     // Refit terminal now that container is visible
     fitAddonRef.current?.fit()
+    // Ensure scrollbar is at bottom after session switch
+    terminal.scrollToBottom()
 
     // Sync terminal size to PTY immediately
     const dims = fitAddonRef.current?.proposeDimensions()
@@ -212,9 +217,13 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         if (event.payload instanceof Array) {
           const data = new Uint8Array(event.payload as number[])
           const decoder = new TextDecoder()
-          terminal.write(decoder.decode(data))
+          terminal.write(decoder.decode(data), () => {
+            terminal.scrollToBottom()
+          })
         } else if (typeof event.payload === 'string') {
-          terminal.write(event.payload)
+          terminal.write(event.payload, () => {
+            terminal.scrollToBottom()
+          })
         }
       })
 
