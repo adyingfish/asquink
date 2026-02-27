@@ -140,7 +140,12 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       <div className="flex-1 flex overflow-hidden">
         {/* Left: Env list */}
         <div className="w-[260px] border-r border-[#1d2030] overflow-y-auto p-3">
-          {envs.map(env => {
+          {[...envs].sort((a, b) => {
+            // Local environment always first
+            if (a.type === 'local') return -1
+            if (b.type === 'local') return 1
+            return 0
+          }).map(env => {
             const isSelected = selectedEnvId === env.id
             const isLocal = env.type === 'local'
             return (
