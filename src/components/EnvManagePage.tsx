@@ -2,6 +2,15 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Env, Project, SessionRecord } from '../App'
 
+// Agent definitions with colors
+const AGENTS = [
+  { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true },
+  { id: 'codex', name: 'Codex', short: 'Codex', color: '#4ADE80', needsProject: true },
+  { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true },
+  { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#F472B6', needsProject: true },
+  { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#C084FC', needsProject: false },
+]
+
 interface EnvManagePageProps {
   onBack: () => void
   onEnvChange?: () => void
@@ -259,6 +268,31 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 ))}
               </div>
             )}
+
+            {/* Agents on this env */}
+            {(() => {
+              const envAgentIds = new Set(envSessions.filter(s => s.agent_id).map(s => s.agent_id))
+              const envAgents = Array.from(envAgentIds).map(id => AGENTS.find(a => a.id === id)).filter(Boolean)
+              return envAgents.length > 0 && (
+                <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">🤖 此环境上的 Agent</div>
+                  {envAgents.map(agent => (
+                    <div key={agent!.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[#1b1f2b] mb-1.5">
+                      <div className="w-1.5 h-5 rounded" style={{ backgroundColor: agent!.color }} />
+                      <div className="flex-1">
+                        <div className="text-xs font-medium">{agent!.name}</div>
+                        <div className="text-[10px] text-[#4e5270]">
+                          {envSessions.filter(s => s.agent_id === agent!.id).length} 个会话
+                        </div>
+                      </div>
+                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: `${agent!.color}20`, color: agent!.color }}>
+                        {agent!.short}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )
+            })()}
 
             {/* Danger zone */}
             {selectedEnv.type !== 'local' && (

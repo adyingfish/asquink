@@ -18,9 +18,10 @@ interface SidebarProps {
 // Agent definitions with colors
 const AGENTS = [
   { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true },
-  { id: 'codex', name: 'Codex CLI', short: 'Codex', color: '#4ADE80', needsProject: true },
+  { id: 'codex', name: 'Codex', short: 'Codex', color: '#4ADE80', needsProject: true },
   { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true },
-  { id: 'openclaw', name: 'OpenClaw', short: 'OClaw', color: '#C084FC', needsProject: false },
+  { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#F472B6', needsProject: true },
+  { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#C084FC', needsProject: false },
 ]
 
 export default function Sidebar({
