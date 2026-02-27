@@ -4,9 +4,10 @@ import type { Env, Project, SessionRecord } from '../App'
 
 interface EnvManagePageProps {
   onBack: () => void
+  onEnvChange?: () => void
 }
 
-export default function EnvManagePage({ onBack }: EnvManagePageProps) {
+export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProps) {
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [sessions, setSessions] = useState<SessionRecord[]>([])
@@ -52,6 +53,7 @@ export default function EnvManagePage({ onBack }: EnvManagePageProps) {
     try {
       await invoke('delete_env', { id })
       loadData()
+      onEnvChange?.()
     } catch (error) {
       console.error('Failed to delete env:', error)
     }
@@ -86,6 +88,7 @@ export default function EnvManagePage({ onBack }: EnvManagePageProps) {
         private_key_path: '',
       })
       loadData()
+      onEnvChange?.()
     } catch (error) {
       console.error('Failed to create env:', error)
       alert('创建环境失败: ' + error)

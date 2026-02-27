@@ -12,6 +12,7 @@ interface SidebarProps {
   onReconnectSession: (session: Session) => void
   isLoading?: boolean
   onOpenEnvManage?: () => void
+  refreshKey?: number
 }
 
 // Agent definitions with colors
@@ -32,6 +33,7 @@ export default function Sidebar({
   onReconnectSession,
   isLoading,
   onOpenEnvManage,
+  refreshKey,
 }: SidebarProps) {
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -49,7 +51,7 @@ export default function Sidebar({
   useEffect(() => {
     loadEnvs()
     loadProjects()
-  }, [])
+  }, [refreshKey])
 
   // Check environment statuses when envs change
   useEffect(() => {

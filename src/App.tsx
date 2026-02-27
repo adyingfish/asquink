@@ -62,6 +62,7 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [showEnvManage, setShowEnvManage] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   // Load historical sessions on app start
   useEffect(() => {
@@ -209,10 +210,14 @@ function App() {
         onReconnectSession={reconnectSession}
         isLoading={isLoading}
         onOpenEnvManage={() => setShowEnvManage(true)}
+        refreshKey={refreshKey}
       />
       <div className="flex-1 flex flex-col min-w-0">
         {showEnvManage ? (
-          <EnvManagePage onBack={() => setShowEnvManage(false)} />
+          <EnvManagePage
+            onBack={() => setShowEnvManage(false)}
+            onEnvChange={() => setRefreshKey(k => k + 1)}
+          />
         ) : (
           <>
             <TabBar
