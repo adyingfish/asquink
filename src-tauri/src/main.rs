@@ -137,6 +137,17 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     app.manage(Arc::new(Mutex::new(state)));
+
+    // Exit app when window is closed
+    if let Some(window) = app.handle().get_webview_window("main") {
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // Force exit to ensure all threads terminate
+                std::process::exit(0);
+            }
+        });
+    }
+
     Ok(())
 }
 
