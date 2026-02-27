@@ -109,7 +109,7 @@ pub struct CreateProjectRequest {
 }
 
 // Session creation request from frontend
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionInfo {
     name: Option<String>,

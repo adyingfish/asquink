@@ -113,6 +113,8 @@ export default function Sidebar({
     const id = `local-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
 
+    console.log('Creating local session:', { id, envId: env.id, agentId, projectId, projectPath })
+
     onAddSession({
       id,
       name: env.name,
@@ -127,35 +129,31 @@ export default function Sidebar({
     })
 
     try {
+      const sessionInfo = {
+        name: env.name,
+        envId: env.id,
+        envType: 'local',
+        agentId: agentId || null,
+        projectId: projectId || null,
+        projectPath: projectPath || null,
+        workingDir: projectPath || null,
+      }
+
+      console.log('Invoking create_local_session with:', { sessionId: id, workingDir: projectPath, sessionInfo })
+
       await invoke('create_local_session', {
         sessionId: id,
         shell: null,
         cols: 80,
         rows: 24,
-        workingDir: projectPath,
-        sessionInfo: agentId ? {
-          name: env.name,
-          envId: env.id,
-          envType: 'local',
-          agentId,
-          projectId,
-          projectPath,
-          workingDir: projectPath,
-        } : {
-          name: env.name,
-          envId: env.id,
-          envType: 'local',
-          agentId: null,
-          projectId,
-          projectPath,
-          workingDir: projectPath,
-        }
+        workingDir: projectPath || null,
+        sessionInfo,
       })
       onSessionStatusChange?.(id, 'connected')
     } catch (error) {
       console.error('Failed to create local session:', error)
       onSessionStatusChange?.(id, 'disconnected')
-      setError('Failed to create local session')
+      setError('Failed to create local session: ' + error)
     }
   }
 
@@ -1052,13 +1050,17 @@ function NewSessionModal({
   }
 
   const handleLaunch = () => {
-    if (!selectedEnv) return
     if (intent === 'terminal') {
-      // Pure terminal session - pass null for agentId
+      // Pure terminal session - requires selectedEnv
+      if (!selectedEnv) return
       onCreateSession(selectedEnv, null as any, undefined, undefined)
     } else if (intent === 'chat' && selectedAgent) {
-      onCreateSession(selectedEnv, selectedAgent, undefined, undefined)
+      // AI chat - use selected env or fallback to local env
+      const env = selectedEnv || envs.find(e => e.type === 'local')
+      if (!env) return
+      onCreateSession(env, selectedAgent, undefined, undefined)
     } else if (intent === 'project' && selectedAgent) {
+      if (!selectedEnv) return
       onCreateSession(selectedEnv, selectedAgent, selectedProject?.name, selectedProject?.path)
     }
   }

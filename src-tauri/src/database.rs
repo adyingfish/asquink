@@ -358,19 +358,39 @@ impl Database {
     }
 
     async fn init_builtin_agents(&self) -> Result<(), sqlx::Error> {
-        let claude_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE id = 'claude'")
-            .fetch_one(&self.pool)
-            .await?;
+        // List of all builtin agents to seed
+        let builtin_agents = [
+            ("claude", "Claude Code", "claude", r#"["--model", "opus"]"#, r#"["ANTHROPIC_API_KEY"]"#, "which claude", "npm install -g @anthropic-ai/claude-code", "claude"),
+            ("codex", "Codex", "codex", "[]", "[]", "which codex", "npm install -g @openai/codex", "codex"),
+            ("gemini", "Gemini CLI", "gemini", "[]", r#"["GEMINI_API_KEY"]"#, "which gemini", "npm install -g @anthropic/gemini-cli", "gemini"),
+            ("opencode", "OpenCode", "opencode", "[]", "[]", "which opencode", "npm install -g opencode", "opencode"),
+            ("openclaw", "OpenClaw", "openclaw", "[]", "[]", "which openclaw", "npm install -g openclaw", "openclaw"),
+        ];
 
-        if claude_exists == 0 {
-            sqlx::query(
-                r#"
-                INSERT INTO agents (id, name, command, default_args, required_env, install_check_cmd, install_cmd, icon, is_builtin)
-                VALUES ('claude', 'Claude Code', 'claude', '["--model", "opus"]', '["ANTHROPIC_API_KEY"]', 'which claude', 'npm install -g @anthropic-ai/claude-code', 'claude', 1)
-                "#,
-            )
-            .execute(&self.pool)
-            .await?;
+        for (id, name, command, default_args, required_env, install_check_cmd, install_cmd, icon) in builtin_agents {
+            let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE id = ?1")
+                .bind(id)
+                .fetch_one(&self.pool)
+                .await?;
+
+            if exists == 0 {
+                sqlx::query(
+                    r#"
+                    INSERT INTO agents (id, name, command, default_args, required_env, install_check_cmd, install_cmd, icon, is_builtin)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)
+                    "#,
+                )
+                .bind(id)
+                .bind(name)
+                .bind(command)
+                .bind(default_args)
+                .bind(required_env)
+                .bind(install_check_cmd)
+                .bind(install_cmd)
+                .bind(icon)
+                .execute(&self.pool)
+                .await?;
+            }
         }
 
         Ok(())
