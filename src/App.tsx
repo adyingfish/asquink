@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TerminalPanel from './components/TerminalPanel'
+import EnvManagePage from './components/EnvManagePage'
 
 export interface Session {
   id: string
@@ -60,6 +61,7 @@ function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [showEnvManage, setShowEnvManage] = useState(false)
 
   // Load historical sessions on app start
   useEffect(() => {
@@ -206,19 +208,26 @@ function App() {
         onDeleteSession={deleteSession}
         onReconnectSession={reconnectSession}
         isLoading={isLoading}
+        onOpenEnvManage={() => setShowEnvManage(true)}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        <TabBar
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSelectSession={setActiveSessionId}
-          onCloseSession={closeSession}
-        />
-        <TerminalPanel
-          sessions={sessions}
-          activeSessionId={activeSessionId}
-          onSessionStatusChange={updateSessionStatus}
-        />
+        {showEnvManage ? (
+          <EnvManagePage onBack={() => setShowEnvManage(false)} />
+        ) : (
+          <>
+            <TabBar
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSelectSession={setActiveSessionId}
+              onCloseSession={closeSession}
+            />
+            <TerminalPanel
+              sessions={sessions}
+              activeSessionId={activeSessionId}
+              onSessionStatusChange={updateSessionStatus}
+            />
+          </>
+        )}
       </div>
     </div>
   )
