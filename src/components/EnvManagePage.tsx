@@ -13,6 +13,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const [sessions, setSessions] = useState<SessionRecord[]>([])
   const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null)
   const [showAddEnv, setShowAddEnv] = useState(false)
+  const [testingConnection, setTestingConnection] = useState<string | null>(null)
+  const [connectionResult, setConnectionResult] = useState<{ id: string; success: boolean; message: string } | null>(null)
   const [addEnvForm, setAddEnvForm] = useState({
     name: '',
     host: '',
@@ -56,6 +58,30 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       onEnvChange?.()
     } catch (error) {
       console.error('Failed to delete env:', error)
+    }
+  }
+
+  const testConnection = async (env: Env) => {
+    setTestingConnection(env.id)
+    setConnectionResult(null)
+
+    try {
+      const status = await invoke<string>('check_env_status', { id: env.id })
+      setConnectionResult({
+        id: env.id,
+        success: status === 'online',
+        message: status === 'online' ? '连接成功' : '连接失败',
+      })
+      // Reload to update status
+      loadData()
+    } catch (error) {
+      setConnectionResult({
+        id: env.id,
+        success: false,
+        message: '连接失败: ' + error,
+      })
+    } finally {
+      setTestingConnection(null)
     }
   }
 
@@ -178,9 +204,18 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 </div>
               </div>
               {selectedEnv.type !== 'local' && (
-                <button className="px-3.5 py-1.75 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors">
-                  🔗 测试连接
+                <button
+                  onClick={() => testConnection(selectedEnv)}
+                  disabled={testingConnection === selectedEnv.id}
+                  className="px-3.5 py-1.75 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors disabled:opacity-50"
+                >
+                  {testingConnection === selectedEnv.id ? '测试中...' : '🔗 测试连接'}
                 </button>
+              )}
+              {connectionResult?.id === selectedEnv.id && (
+                <span className={`text-xs ${connectionResult.success ? 'text-[#4ADE80]' : 'text-[#F87171]'}`}>
+                  {connectionResult.message}
+                </span>
               )}
             </div>
 

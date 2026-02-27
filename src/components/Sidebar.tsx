@@ -372,6 +372,10 @@ export default function Sidebar({
                 {!online && (
                   <div className="pl-10 mb-1">
                     <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        checkEnvStatus(env.id)
+                      }}
                       className="text-[10px] text-[#4e5270] cursor-pointer"
                       onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
                       onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
