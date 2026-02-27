@@ -23,6 +23,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   // Refs to track latest values for clipboard handlers
   const sessionsRef = useRef(sessions)
   const activeSessionIdRef = useRef(activeSessionId)
+  const isCopyingRef = useRef(false)
 
   // Keep refs updated
   useEffect(() => {
@@ -61,37 +62,67 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     terminal.open(containerRef.current)
     fitAddon.fit()
 
-    // Handle clipboard shortcuts (Ctrl+C, Ctrl+V)
-    terminal.onKey(({ domEvent }) => {
-      const currentSessionId = activeSessionIdRef.current
-      const activeSession = sessionsRef.current.find(s => s.id === currentSessionId)
-
-      // Ctrl+C: Copy if selection exists, otherwise send interrupt
-      if (domEvent.ctrlKey && domEvent.key === 'c') {
+    // Handle clipboard shortcuts
+    terminal.onKey(({ domEvent, key }) => {
+      // Ctrl+C: Copy if selection exists
+      if (domEvent.ctrlKey && (domEvent.key === 'c' || key === '\x03')) {
         const selection = terminal.getSelection()
         if (selection) {
           // Copy to clipboard using Tauri API
           writeText(selection).catch(console.error)
+          terminal.clearSelection()
+          // Set flag to prevent onData from sending ^C
+          isCopyingRef.current = true
+          setTimeout(() => { isCopyingRef.current = false }, 50)
           domEvent.preventDefault()
+          domEvent.stopPropagation()
           return
         }
-        // No selection - let it through as interrupt signal (Ctrl+C)
+        // No selection - let Ctrl+C through as interrupt signal
       }
 
-      // Ctrl+V: Paste from clipboard
-      if (domEvent.ctrlKey && domEvent.key === 'v') {
+      // Ctrl+Shift+C: Always copy selection
+      if (domEvent.ctrlKey && domEvent.shiftKey && domEvent.key === 'C') {
+        const selection = terminal.getSelection()
+        if (selection) {
+          writeText(selection).catch(console.error)
+          terminal.clearSelection()
+        }
         domEvent.preventDefault()
-        readText().then(text => {
-          if (text && activeSession?.status === 'connected' && currentSessionId) {
-            invoke('write_to_session', {
-              sessionId: currentSessionId,
-              sessionType: activeSession.type,
-              data: text,
-            }).catch(console.error)
-          }
-        }).catch(console.error)
+        domEvent.stopPropagation()
+        return
       }
+
+      // Ctrl+V: Paste - handled by paste event listener
     })
+
+    // Handle paste event
+    const handlePaste = (e: ClipboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+
+      const currentSessionId = activeSessionIdRef.current
+      const activeSession = sessionsRef.current.find(s => s.id === currentSessionId)
+
+      readText().then(text => {
+        if (text && activeSession?.status === 'connected' && currentSessionId) {
+          invoke('write_to_session', {
+            sessionId: currentSessionId,
+            sessionType: activeSession.type,
+            data: text,
+          }).catch(console.error)
+        }
+      }).catch(err => {
+        console.error('Paste failed:', err)
+      })
+    }
+
+    // Listen for paste events
+    const textarea = containerRef.current.querySelector('textarea.xterm-helper-textarea')
+    if (textarea) {
+      textarea.addEventListener('paste', handlePaste as EventListener)
+    }
+    containerRef.current.addEventListener('paste', handlePaste as EventListener)
 
     // Write welcome message
     terminal.writeln('\x1b[1;34m╔══════════════════════════════════════╗\x1b[0m')
@@ -129,6 +160,14 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     return () => {
       window.removeEventListener('resize', handleResize)
+      // Remove paste event listeners
+      if (containerRef.current) {
+        containerRef.current.removeEventListener('paste', handlePaste as EventListener)
+        const textarea = containerRef.current.querySelector('textarea.xterm-helper-textarea')
+        if (textarea) {
+          textarea.removeEventListener('paste', handlePaste as EventListener)
+        }
+      }
       terminal.dispose()
     }
   }, [])
@@ -178,7 +217,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
           terminal.write(event.payload)
         }
       })
-      
+
       unlistenRef.current = unlisten
     }
 
@@ -189,6 +228,11 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       disposableRef.current.dispose()
     }
     disposableRef.current = terminal.onData((data: string) => {
+      // Check if we just handled a copy operation - don't send ^C
+      if (isCopyingRef.current) {
+        return
+      }
+
       const session = sessions.find(s => s.id === activeSessionId)
       if (session?.status === 'connected') {
         invoke('write_to_session', {
