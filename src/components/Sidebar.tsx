@@ -241,6 +241,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
                 onSelectSession={(id) => {
                   onSelectSession(id)
                 }}
+                onNewSession={() => setShowAgentSelect({ env })}
               />
             ))}
 
@@ -480,6 +481,7 @@ function EnvSessionGroup({
   expanded,
   onToggle,
   onSelectSession,
+  onNewSession,
 }: {
   env: Env
   sessions: Session[]
@@ -487,6 +489,7 @@ function EnvSessionGroup({
   expanded: boolean
   onToggle: () => void
   onSelectSession: (id: string) => void
+  onNewSession: () => void
 }) {
   const getAgentConfig = (session: Session) => {
     return AGENTS.find(a => a.id === session.agentId)
@@ -642,6 +645,7 @@ function EnvSessionGroup({
           {/* New session button */}
           <div
             className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-[#4e5270] cursor-pointer rounded-md transition-colors"
+            onClick={onNewSession}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = '#E8915A'
               e.currentTarget.style.background = 'rgba(232, 145, 90, 0.08)'
