@@ -194,6 +194,53 @@ async fn create_env(
     req: CreateEnvRequest,
 ) -> Result<String, String> {
     let state = state.lock().await;
+
+    // Check for duplicate environment
+    let existing_envs = state.db.list_envs().await.map_err(|e| e.to_string())?;
+
+    for env in existing_envs {
+        if env.env_type != req.env_type {
+            continue;
+        }
+
+        if req.env_type == "ssh" {
+            // Check SSH: host + port + username
+            let existing_host = env.host.as_deref().unwrap_or("");
+            let existing_port = env.port.unwrap_or(22);
+            let existing_user = env.username.as_deref().unwrap_or("");
+
+            let req_host = req.host.as_deref().unwrap_or("");
+            let req_port = req.port.unwrap_or(22);
+            let req_user = req.username.as_deref().unwrap_or("");
+
+            if existing_host == req_host
+                && existing_port == req_port
+                && existing_user == req_user
+            {
+                return Err(format!(
+                    "SSH 环境 {}@{}:{} 已存在",
+                    req_user, req_host, req_port
+                ));
+            }
+        } else if req.env_type == "wsl" {
+            // Check WSL: distro + user
+            let existing_distro = env.wsl_distro.as_deref().unwrap_or("");
+            let existing_user = env.wsl_user.as_deref().unwrap_or("");
+
+            let req_distro = req.wsl_distro.as_deref().unwrap_or("");
+            let req_user = req.wsl_user.as_deref().unwrap_or("");
+
+            if existing_distro == req_distro && existing_user == req_user {
+                let user_suffix = if req_user.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", req_user)
+                };
+                return Err(format!("WSL 环境 {}{} 已存在", req_distro, user_suffix));
+            }
+        }
+    }
+
     let id = uuid::Uuid::new_v4().to_string();
     state.db.create_env(&id, &req).await.map_err(|e| e.to_string())?;
     Ok(id)
