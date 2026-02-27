@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
@@ -16,6 +16,23 @@ export interface Session {
   mode: 'terminal' | 'chat'  // View mode
   statusText?: string     // Status description (e.g., "运行中", "对话中")
   lastMsg?: string        // Last message or task description
+  startedAt?: string      // Session start time
+  endedAt?: string        // Session end time
+  isReconnect?: boolean   // Whether this is a historical session to reconnect
+}
+
+// Session record from database
+export interface SessionRecord {
+  id: string
+  name: string | null
+  env_id: string | null
+  env_type: string
+  agent_id: string | null
+  project_id: string | null
+  project_path: string | null
+  working_dir: string | null
+  started_at: string | null
+  ended_at: string | null
 }
 
 export interface Env {
@@ -41,9 +58,44 @@ export interface Project {
 function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  // Load historical sessions on app start
+  useEffect(() => {
+    loadHistoricalSessions()
+  }, [])
+
+  const loadHistoricalSessions = async () => {
+    try {
+      const records = await invoke<SessionRecord[]>('list_sessions')
+      const historicalSessions: Session[] = records.map(r => ({
+        id: r.id,
+        name: r.name || 'Unknown',
+        type: r.env_type as 'local' | 'ssh',
+        envId: r.env_id || undefined,
+        agentId: r.agent_id || undefined,
+        projectId: r.project_id || undefined,
+        projectPath: r.project_path || undefined,
+        status: 'disconnected',
+        mode: 'terminal',
+        startedAt: r.started_at || undefined,
+        endedAt: r.ended_at || undefined,
+        isReconnect: true,
+      }))
+      setSessions(historicalSessions)
+    } catch (error) {
+      console.error('Failed to load historical sessions:', error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   const addSession = (session: Session) => {
-    setSessions([...sessions, session])
+    // Remove any existing session with the same ID (from historical)
+    setSessions(prev => {
+      const filtered = prev.filter(s => s.id !== session.id)
+      return [...filtered, session]
+    })
     setActiveSessionId(session.id)
   }
 
@@ -66,10 +118,78 @@ function App() {
       }
     }
 
-    const newSessions = sessions.filter(s => s.id !== id)
-    setSessions(newSessions)
+    // Update status to disconnected instead of removing
+    setSessions(prev => prev.map(s =>
+      s.id === id ? { ...s, status: 'disconnected' as const, isReconnect: true } : s
+    ))
+
     if (activeSessionId === id) {
-      setActiveSessionId(newSessions.length > 0 ? newSessions[0].id : null)
+      const connectedSessions = sessions.filter(s => s.id !== id && s.status === 'connected')
+      setActiveSessionId(connectedSessions.length > 0 ? connectedSessions[0].id : null)
+    }
+  }
+
+  const deleteSession = async (id: string) => {
+    try {
+      await invoke('delete_session_record', { sessionId: id })
+      setSessions(prev => prev.filter(s => s.id !== id))
+      if (activeSessionId === id) {
+        setActiveSessionId(sessions.length > 1 ? sessions.find(s => s.id !== id)?.id || null : null)
+      }
+    } catch (error) {
+      console.error('Failed to delete session:', error)
+    }
+  }
+
+  // Reconnect to a disconnected session
+  const reconnectSession = async (oldSession: Session) => {
+    // Update status to connecting
+    setSessions(prev => prev.map(s =>
+      s.id === oldSession.id ? { ...s, status: 'connecting' as const, isReconnect: false } : s
+    ))
+    setActiveSessionId(oldSession.id)
+
+    try {
+      // Reopen session in database
+      await invoke('reopen_session', { sessionId: oldSession.id })
+
+      // Create PTY/SSH connection with existing ID
+      if (oldSession.type === 'local') {
+        await invoke('create_local_session', {
+          sessionId: oldSession.id,
+          shell: null,
+          cols: 80,
+          rows: 24,
+          sessionInfo: null // Don't create new DB record
+        })
+      } else {
+        // Get env config for SSH
+        const envs = await invoke<{id: string, auth_type?: string}[]>('list_envs')
+        const env = envs.find(e => e.id === oldSession.envId)
+
+        if (env?.auth_type === 'password') {
+          // Need password - this case needs special handling
+          throw new Error('SSH with password requires re-authentication')
+        }
+
+        await invoke('create_ssh_session', {
+          sessionId: oldSession.id,
+          req: {
+            serverId: oldSession.envId,
+            password: null,
+          },
+          sessionInfo: null
+        })
+      }
+
+      setSessions(prev => prev.map(s =>
+        s.id === oldSession.id ? { ...s, status: 'connected' as const } : s
+      ))
+    } catch (error) {
+      console.error('Failed to reconnect session:', error)
+      setSessions(prev => prev.map(s =>
+        s.id === oldSession.id ? { ...s, status: 'disconnected' as const, isReconnect: true } : s
+      ))
     }
   }
 
@@ -81,6 +201,9 @@ function App() {
         onSelectSession={setActiveSessionId}
         activeSessionId={activeSessionId}
         sessions={sessions}
+        onDeleteSession={deleteSession}
+        onReconnectSession={reconnectSession}
+        isLoading={isLoading}
       />
       <div className="flex-1 flex flex-col min-w-0">
         <TabBar

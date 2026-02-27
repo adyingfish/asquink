@@ -29,6 +29,21 @@ pub struct ProjectConfig {
     pub lang: Option<String>,
 }
 
+// Session record for persistence
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct SessionRecord {
+    pub id: String,
+    pub name: Option<String>,
+    pub env_id: Option<String>,
+    pub env_type: String,
+    pub agent_id: Option<String>,
+    pub project_id: Option<String>,
+    pub project_path: Option<String>,
+    pub working_dir: Option<String>,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+}
+
 impl Database {
     pub async fn new(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = SqlitePoolOptions::new()
@@ -108,6 +123,9 @@ impl Database {
         )
         .execute(&self.pool)
         .await?;
+
+        // Migrate sessions table - add new columns if they don't exist
+        self.migrate_sessions_table().await?;
 
         // Create settings table
         sqlx::query(
@@ -221,6 +239,41 @@ impl Database {
             )
             .execute(&self.pool)
             .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn migrate_sessions_table(&self) -> Result<(), sqlx::Error> {
+        // Get current table info
+        let columns: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM pragma_table_info('sessions')"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let column_names: Vec<&str> = columns.iter().map(|(name,)| name.as_str()).collect();
+
+        // Add missing columns
+        if !column_names.contains(&"env_id") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN env_id TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !column_names.contains(&"name") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN name TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !column_names.contains(&"project_id") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN project_id TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !column_names.contains(&"project_path") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN project_path TEXT")
+                .execute(&self.pool)
+                .await?;
         }
 
         Ok(())
@@ -448,6 +501,60 @@ impl Database {
 
     pub async fn delete_project(&self, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM projects WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    // Session management methods
+    pub async fn create_session(&self, session: &SessionRecord) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO sessions (id, name, env_id, env_type, agent_id, project_id, project_path, working_dir, started_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))
+            "#,
+        )
+        .bind(&session.id)
+        .bind(&session.name)
+        .bind(&session.env_id)
+        .bind(&session.env_type)
+        .bind(&session.agent_id)
+        .bind(&session.project_id)
+        .bind(&session.project_path)
+        .bind(&session.working_dir)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_sessions(&self) -> Result<Vec<SessionRecord>, sqlx::Error> {
+        let sessions = sqlx::query_as::<_, SessionRecord>(
+            "SELECT id, name, env_id, env_type, agent_id, project_id, project_path, working_dir, started_at, ended_at FROM sessions ORDER BY started_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(sessions)
+    }
+
+    pub async fn end_session(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_session(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM sessions WHERE id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn reopen_session(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE sessions SET ended_at = NULL, started_at = datetime('now') WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
             .await?;

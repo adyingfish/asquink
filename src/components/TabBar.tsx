@@ -41,7 +41,7 @@ export default function TabBar({ sessions, activeSessionId, onSelectSession, onC
 
   return (
     <div className="h-9 bg-[#161822] flex items-center border-b border-[#1e2130] overflow-x-auto">
-      {sessions.map(session => {
+      {sessions.filter(s => s.status !== 'disconnected').map(session => {
         const { primary, secondary, agent } = getTabTitle(session)
         const isActive = activeSessionId === session.id
 

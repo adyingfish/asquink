@@ -77,6 +77,7 @@ pub struct CreateServerRequest {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CreateSshSessionRequest {
     server_id: String,
     password: Option<String>,
@@ -104,6 +105,19 @@ pub struct CreateProjectRequest {
     path: String,
     env_id: String,
     lang: Option<String>,
+}
+
+// Session creation request from frontend
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateSessionInfo {
+    name: Option<String>,
+    env_id: Option<String>,
+    env_type: String,
+    agent_id: Option<String>,
+    project_id: Option<String>,
+    project_path: Option<String>,
+    working_dir: Option<String>,
 }
 
 // Initialize database on app start
@@ -328,10 +342,29 @@ async fn create_local_session(
     shell: Option<String>,
     cols: u16,
     rows: u16,
+    session_info: Option<CreateSessionInfo>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
     state.pty_manager.create_session(&session_id, shell, cols, rows, app_handle).await.map_err(|e| e.to_string())?;
+
+    // Save session to database if info provided
+    if let Some(info) = session_info {
+        let record = database::SessionRecord {
+            id: session_id.clone(),
+            name: info.name,
+            env_id: info.env_id,
+            env_type: info.env_type,
+            agent_id: info.agent_id,
+            project_id: info.project_id,
+            project_path: info.project_path,
+            working_dir: info.working_dir,
+            started_at: None,
+            ended_at: None,
+        };
+        state.db.create_session(&record).await.map_err(|e| e.to_string())?;
+    }
+
     Ok(session_id)
 }
 
@@ -340,6 +373,7 @@ async fn create_ssh_session(
     state: State<'_, Arc<Mutex<AppState>>>,
     session_id: String,
     req: CreateSshSessionRequest,
+    session_info: Option<CreateSessionInfo>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
@@ -376,6 +410,24 @@ async fn create_ssh_session(
     ).await.map_err(|e| e.to_string())?;
 
     state.ssh_sessions.lock().await.insert(session_id.clone(), session);
+
+    // Save session to database if info provided
+    if let Some(info) = session_info {
+        let record = database::SessionRecord {
+            id: session_id.clone(),
+            name: info.name,
+            env_id: info.env_id,
+            env_type: info.env_type,
+            agent_id: info.agent_id,
+            project_id: info.project_id,
+            project_path: info.project_path,
+            working_dir: info.working_dir,
+            started_at: None,
+            ended_at: None,
+        };
+        state.db.create_session(&record).await.map_err(|e| e.to_string())?;
+    }
+
     Ok(session_id)
 }
 
@@ -435,17 +487,45 @@ async fn close_session(
     let state = state.lock().await;
 
     if session_type == "local" {
-        state.pty_manager.close_session(&session_id).await.map_err(|e| e.to_string())
+        state.pty_manager.close_session(&session_id).await.map_err(|e| e.to_string())?
     } else if session_type == "ssh" {
         let mut sessions = state.ssh_sessions.lock().await;
         if let Some(mut session) = sessions.remove(&session_id) {
-            session.close().await.map_err(|e| e.to_string())
-        } else {
-            Ok(())
+            session.close().await.map_err(|e| e.to_string())?
         }
     } else {
-        Err("Unknown session type".to_string())
+        return Err("Unknown session type".to_string())
     }
+
+    // Update ended_at in database
+    state.db.end_session(&session_id).await.map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+// Session history management commands
+#[tauri::command]
+async fn list_sessions(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<database::SessionRecord>, String> {
+    let state = state.lock().await;
+    state.db.list_sessions().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn delete_session_record(state: State<'_, Arc<Mutex<AppState>>>, session_id: String) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.delete_session(&session_id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn debug_sessions(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<database::SessionRecord>, String> {
+    let state = state.lock().await;
+    state.db.list_sessions().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn reopen_session(state: State<'_, Arc<Mutex<AppState>>>, session_id: String) -> Result<(), String> {
+    let state = state.lock().await;
+    state.db.reopen_session(&session_id).await.map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -481,6 +561,10 @@ fn main() {
             write_to_session,
             resize_session,
             close_session,
+            list_sessions,
+            delete_session_record,
+            reopen_session,
+            debug_sessions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Server, Plus, Terminal, AlertCircle, Folder, MessageSquare } from 'lucide-react'
+import { Server, Plus, Terminal, AlertCircle, Folder, MessageSquare, Trash2, RotateCcw } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Session, Env, Project } from '../App'
 
@@ -9,6 +9,9 @@ interface SidebarProps {
   onSelectSession: (id: string) => void
   activeSessionId: string | null
   sessions: Session[]
+  onDeleteSession: (id: string) => void
+  onReconnectSession: (session: Session) => void
+  isLoading?: boolean
 }
 
 // Agent definitions with colors
@@ -19,7 +22,7 @@ const AGENTS = [
   { id: 'openclaw', name: 'OpenClaw', short: 'OClaw', color: '#C084FC', needsProject: false },
 ]
 
-export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectSession, activeSessionId, sessions }: SidebarProps) {
+export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectSession, activeSessionId, sessions, onDeleteSession, onReconnectSession, isLoading }: SidebarProps) {
   const [activeTab, setActiveTab] = useState<'sessions' | 'envs' | 'projects'>('sessions')
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -107,7 +110,16 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
         sessionId: id,
         shell: null,
         cols: 80,
-        rows: 24
+        rows: 24,
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          envType: 'local',
+          agentId,
+          projectId,
+          projectPath,
+          workingDir: projectPath,
+        }
       })
       onSessionStatusChange?.(id, 'connected')
     } catch (error) {
@@ -139,8 +151,17 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
       await invoke('create_ssh_session', {
         sessionId,
         req: {
-          server_id: env.id,
+          serverId: env.id,
           password: pwd,
+        },
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          envType: 'ssh',
+          agentId,
+          projectId,
+          projectPath,
+          workingDir: projectPath,
         }
       })
       onSessionStatusChange?.(sessionId, 'connected')
@@ -181,11 +202,21 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
 
   // Group sessions by environment
   const sessionsByEnv = sessions.reduce((acc, session) => {
-    const envId = session.envId || 'unknown'
+    // If session has envId but env doesn't exist, treat as unknown
+    const envId = (session.envId && envs.find(e => e.id === session.envId))
+      ? session.envId
+      : 'unknown'
     if (!acc[envId]) acc[envId] = []
     acc[envId].push(session)
     return acc
   }, {} as Record<string, Session[]>)
+
+  // Debug logging
+  useEffect(() => {
+    console.log('Sidebar sessions:', sessions)
+    console.log('Sidebar envs:', envs)
+    console.log('sessionsByEnv:', sessionsByEnv)
+  }, [sessions, envs])
 
   return (
     <div className="w-64 bg-[#0f1117] border-r border-[#1e2130] flex flex-col">
@@ -229,27 +260,77 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
       <div className="flex-1 overflow-y-auto p-2">
         {activeTab === 'sessions' && (
           <>
-            {/* Sessions grouped by environment */}
-            {envs.filter(e => envStatuses[e.id] === 'online' && sessionsByEnv[e.id]?.length > 0).map(env => (
-              <EnvSessionGroup
-                key={env.id}
-                env={env}
-                sessions={sessionsByEnv[env.id] || []}
-                activeSessionId={activeSessionId}
-                expanded={expandedEnvs.has(env.id)}
-                onToggle={() => toggleEnvExpand(env.id)}
-                onSelectSession={(id) => {
-                  onSelectSession(id)
-                }}
-                onNewSession={() => setShowAgentSelect({ env })}
-              />
-            ))}
-
-            {sessions.length === 0 && (
+            {isLoading ? (
               <div className="text-xs text-[#555872] p-4 text-center">
-                No active sessions.<br />
-                Go to Environments tab to connect.
+                加载中...
               </div>
+            ) : (
+              <>
+                {/* Sessions grouped by environment (including disconnected) */}
+                {envs.filter(e => sessionsByEnv[e.id]?.length > 0).map(env => (
+                  <EnvSessionGroup
+                    key={env.id}
+                    env={env}
+                    sessions={sessionsByEnv[env.id] || []}
+                    activeSessionId={activeSessionId}
+                    expanded={expandedEnvs.has(env.id)}
+                    onToggle={() => toggleEnvExpand(env.id)}
+                    onSelectSession={(id) => {
+                      onSelectSession(id)
+                    }}
+                    onNewSession={() => setShowAgentSelect({ env })}
+                    onDeleteSession={onDeleteSession}
+                    onReconnectSession={onReconnectSession}
+                  />
+                ))}
+
+                {/* Sessions with unknown/missing env */}
+                {sessionsByEnv['unknown'] && sessionsByEnv['unknown'].length > 0 && (
+                  <div className="mt-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] px-2 mb-1">
+                      未知环境
+                    </div>
+                    {sessionsByEnv['unknown'].map(session => {
+                      const agent = AGENTS.find(a => a.id === session.agentId)
+                      return (
+                        <div
+                          key={session.id}
+                          className="flex items-center gap-2 px-2.5 py-1.5 rounded-md mb-0.5 opacity-50 group relative"
+                          style={{ background: 'transparent' }}
+                        >
+                          <div className="relative flex-shrink-0">
+                            <div className="w-2 h-2 rounded-full" style={{ background: agent?.color || '#555872' }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[12px] font-medium truncate">
+                              {session.projectId || session.name}
+                            </div>
+                            <div className="text-[10px] text-[#4e5270]">
+                              {agent?.short || 'Agent'} · 环境已删除
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => onDeleteSession(session.id)}
+                              className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400"
+                              title="删除记录"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+
+                {sessions.length === 0 && (
+                  <div className="text-xs text-[#555872] p-4 text-center">
+                    No active sessions.<br />
+                    Go to Environments tab to connect.
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -482,6 +563,8 @@ function EnvSessionGroup({
   onToggle,
   onSelectSession,
   onNewSession,
+  onDeleteSession,
+  onReconnectSession,
 }: {
   env: Env
   sessions: Session[]
@@ -490,6 +573,8 @@ function EnvSessionGroup({
   onToggle: () => void
   onSelectSession: (id: string) => void
   onNewSession: () => void
+  onDeleteSession: (id: string) => void
+  onReconnectSession: (session: Session) => void
 }) {
   const getAgentConfig = (session: Session) => {
     return AGENTS.find(a => a.id === session.agentId)
@@ -508,12 +593,18 @@ function EnvSessionGroup({
   }
 
   const online = env.status === 'online'
+  // Sort sessions: connected first, disconnected last
+  const sortedSessions = [...sessions].sort((a, b) => {
+    if (a.status === 'connected' && b.status !== 'connected') return -1
+    if (a.status !== 'connected' && b.status === 'connected') return 1
+    return 0
+  })
 
   return (
     <div className="mb-1">
       {/* Environment header */}
       <div
-        onClick={() => online && onToggle()}
+        onClick={() => onToggle()}
         className="flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer transition-colors"
         style={{ opacity: online ? 1 : 0.4 }}
         onMouseEnter={(e) => {
@@ -526,7 +617,7 @@ function EnvSessionGroup({
         {/* Expand arrow */}
         <span
           className="text-[9px] text-[#4e5270] w-3 text-center transition-transform duration-150"
-          style={{ transform: expanded && online ? 'rotate(90deg)' : 'none' }}
+          style={{ transform: expanded ? 'rotate(90deg)' : 'none' }}
         >
           ▶
         </span>
@@ -544,13 +635,6 @@ function EnvSessionGroup({
           </div>
         </div>
 
-        {/* Session count badge */}
-        {sessions.length > 0 && (
-          <span className="text-[9px] font-mono bg-[#1b1f2b] text-[#4e5270] px-1.5 py-0.5 rounded">
-            {sessions.length}
-          </span>
-        )}
-
         {/* Online status dot */}
         <div
           className="w-[7px] h-[7px] rounded-full flex-shrink-0"
@@ -562,27 +646,28 @@ function EnvSessionGroup({
       </div>
 
       {/* Sessions list */}
-      {expanded && online && (
+      {expanded && (
         <div className="pl-4 mt-1">
-          {sessions.map((session) => {
+          {sortedSessions.map((session) => {
             const isActive = activeSessionId === session.id
             const agent = getAgentConfig(session)
             const isProject = !!session.projectId
+            const isDisconnected = session.status === 'disconnected'
 
             return (
               <div
                 key={session.id}
-                onClick={() => onSelectSession(session.id)}
-                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md cursor-pointer mb-0.5 transition-colors"
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-md mb-0.5 transition-colors group relative"
                 style={{
-                  background: isActive ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
-                  borderLeft: isActive ? '2.5px solid #E8915A' : '2.5px solid transparent',
+                  background: isActive && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
+                  borderLeft: isActive && !isDisconnected ? '2.5px solid #E8915A' : '2.5px solid transparent',
+                  opacity: isDisconnected ? 0.5 : 1,
                 }}
                 onMouseEnter={(e) => {
-                  if (!isActive) e.currentTarget.style.background = '#222738'
+                  if (!isActive || isDisconnected) e.currentTarget.style.background = '#222738'
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = isActive ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
+                  e.currentTarget.style.background = isActive && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
                 }}
               >
                 {/* Agent color dot + status dot */}
@@ -601,7 +686,10 @@ function EnvSessionGroup({
                 </div>
 
                 {/* Session info */}
-                <div className="flex-1 min-w-0">
+                <div
+                  className="flex-1 min-w-0 cursor-pointer"
+                  onClick={() => !isDisconnected && onSelectSession(session.id)}
+                >
                   <div className="text-[12px] font-medium truncate" style={{ fontFamily: isProject ? "'JetBrains Mono', monospace" : undefined }}>
                     {isProject ? session.projectId : (session.lastMsg || agent?.name || session.name)}
                   </div>
@@ -623,21 +711,40 @@ function EnvSessionGroup({
                   </div>
                 </div>
 
-                {/* Mode badge & status */}
-                <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                  <span
-                    className="text-[8.5px] px-1.5 py-0.5 rounded"
-                    style={{
-                      background: session.mode === 'chat' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(96, 165, 250, 0.08)',
-                      color: session.mode === 'chat' ? '#C084FC' : '#60A5FA',
-                    }}
-                  >
-                    {session.mode === 'chat' ? '💬' : '⌨'}
-                  </span>
-                  {session.statusText && (
-                    <span className="text-[9px] text-[#4ADE80]">{session.statusText}</span>
-                  )}
-                </div>
+                {/* Mode badge & status OR reconnect/delete buttons */}
+                {isDisconnected ? (
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => onReconnectSession(session)}
+                      className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80]"
+                      title="重新连接"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <button
+                      onClick={() => onDeleteSession(session.id)}
+                      className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400"
+                      title="删除记录"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <span
+                      className="text-[8.5px] px-1.5 py-0.5 rounded"
+                      style={{
+                        background: session.mode === 'chat' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(96, 165, 250, 0.08)',
+                        color: session.mode === 'chat' ? '#C084FC' : '#60A5FA',
+                      }}
+                    >
+                      {session.mode === 'chat' ? '💬' : '⌨'}
+                    </span>
+                    {session.statusText && (
+                      <span className="text-[9px] text-[#4ADE80]">{session.statusText}</span>
+                    )}
+                  </div>
+                )}
               </div>
             )
           })}

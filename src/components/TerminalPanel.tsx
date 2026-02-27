@@ -18,6 +18,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const terminalRef = useRef<Terminal | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const unlistenRef = useRef<(() => void) | null>(null)
+  const disposableRef = useRef<{ dispose: () => void } | null>(null)
 
   // Refs to track latest values for clipboard handlers
   const sessionsRef = useRef(sessions)
@@ -184,20 +185,25 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     setupListener()
 
     // Handle keyboard input
-    const onData = (data: string) => {
-      if (activeSession.status === 'connected') {
+    if (disposableRef.current) {
+      disposableRef.current.dispose()
+    }
+    disposableRef.current = terminal.onData((data: string) => {
+      const session = sessions.find(s => s.id === activeSessionId)
+      if (session?.status === 'connected') {
         invoke('write_to_session', {
           sessionId: activeSessionId,
-          sessionType: activeSession.type,
+          sessionType: session.type,
           data,
         }).catch(console.error)
       }
-    }
-    
-    const disposable = terminal.onData(onData)
+    })
 
     return () => {
-      disposable.dispose()
+      if (disposableRef.current) {
+        disposableRef.current.dispose()
+        disposableRef.current = null
+      }
       if (unlistenRef.current) {
         unlistenRef.current()
         unlistenRef.current = null
