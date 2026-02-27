@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import { Plus, AlertCircle, Folder, Trash2, RotateCcw, Settings, Key } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Session, Env, Project } from '../App'
 
@@ -37,8 +36,7 @@ export default function Sidebar({
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [showAddServer, setShowAddServer] = useState(false)
-  const [showAddProject, setShowAddProject] = useState(false)
-  const [showAgentSelect, setShowAgentSelect] = useState<{ env: Env; project?: Project } | null>(null)
+  const [showNewSession, setShowNewSession] = useState(false)
   const [showPasswordPrompt, setShowPasswordPrompt] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -100,16 +98,16 @@ export default function Sidebar({
   }
 
   // 创建本地会话（带 Agent 和可选项目）
-  const createLocalSessionWithAgent = async (env: Env, agentId: string, projectId?: string, projectPath?: string) => {
+  const createLocalSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
     const id = `local-${Date.now()}`
-    const agent = AGENTS.find(a => a.id === agentId)
+    const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
 
     onAddSession({
       id,
       name: env.name,
       type: 'local',
       envId: env.id,
-      agentId,
+      agentId: agentId || undefined,
       projectId,
       projectPath,
       status: 'connecting',
@@ -124,11 +122,19 @@ export default function Sidebar({
         cols: 80,
         rows: 24,
         workingDir: projectPath,
-        sessionInfo: {
+        sessionInfo: agentId ? {
           name: env.name,
           envId: env.id,
           envType: 'local',
           agentId,
+          projectId,
+          projectPath,
+          workingDir: projectPath,
+        } : {
+          name: env.name,
+          envId: env.id,
+          envType: 'local',
+          agentId: null,
           projectId,
           projectPath,
           workingDir: projectPath,
@@ -143,16 +149,16 @@ export default function Sidebar({
   }
 
   // 创建 SSH 会话（带 Agent 和可选项目）
-  const createSshSessionWithAgent = async (env: Env, agentId: string, projectId?: string, projectPath?: string, pwd?: string | null) => {
+  const createSshSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string, pwd?: string | null) => {
     const sessionId = `ssh-${Date.now()}`
-    const agent = AGENTS.find(a => a.id === agentId)
+    const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
 
     onAddSession({
       id: sessionId,
       name: env.name,
       type: 'ssh',
       envId: env.id,
-      agentId,
+      agentId: agentId || undefined,
       projectId,
       projectPath,
       status: 'connecting',
@@ -171,7 +177,7 @@ export default function Sidebar({
           name: env.name,
           envId: env.id,
           envType: 'ssh',
-          agentId,
+          agentId: agentId || null,
           projectId,
           projectPath,
           workingDir: projectPath,
@@ -188,7 +194,7 @@ export default function Sidebar({
   }
 
   // 创建会话的主入口
-  const createSessionWithAgent = async (env: Env, agentId: string, projectId?: string, projectPath?: string) => {
+  const createSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
     if (env.type === 'local') {
       await createLocalSessionWithAgent(env, agentId, projectId, projectPath)
     } else if (env.auth_type === 'password') {
@@ -274,8 +280,7 @@ export default function Sidebar({
       {/* Error message */}
       {error && (
         <div className="mx-2.5 mt-1 p-2 bg-red-600/20 border border-red-600/50 rounded text-xs text-red-400 flex items-center gap-2">
-          <AlertCircle size={14} />
-          {error}
+          ⚠️ {error}
           <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-300">×</button>
         </div>
       )}
@@ -409,15 +414,15 @@ export default function Sidebar({
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
-                                  className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80]"
+                                  className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
                                 >
-                                  <RotateCcw size={12} />
+                                  ↻
                                 </button>
                                 <button
                                   onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
-                                  className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400"
+                                  className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
                                 >
-                                  <Trash2 size={12} />
+                                  🗑
                                 </button>
                               </div>
                             )}
@@ -430,7 +435,7 @@ export default function Sidebar({
                         <div key={pk} className="mb-0.5">
                           <div
                             onClick={() => toggleProjectExpand(pk)}
-                            className="flex items-center gap-1.5 px-2 py-1.25 rounded-md cursor-pointer"
+                            className="flex items-center gap-1.5 px-2 py-2 rounded-md cursor-pointer"
                             onMouseEnter={(e) => e.currentTarget.style.background = '#222738'}
                             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                           >
@@ -441,9 +446,14 @@ export default function Sidebar({
                               ▶
                             </span>
                             <span className="text-[11px] text-[#4e5270]">📁</span>
-                            <span className="text-[12px] font-medium font-mono flex-1 truncate">
-                              {projSessions[0]?.projectId}
-                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[12px] font-medium font-mono truncate">
+                                {projSessions[0]?.projectId}
+                              </div>
+                              <div className="text-[10px] text-[#4e5270] truncate">
+                                {projSessions[0]?.projectPath}
+                              </div>
+                            </div>
                             {hasActive && (
                               <div
                                 className="w-[5px] h-[5px] rounded-full"
@@ -454,7 +464,7 @@ export default function Sidebar({
                                 }}
                               />
                             )}
-                            <span className="text-[9px] font-mono text-[#4e5270] bg-[#1b1f2b] px-1 rounded">
+                            <span className="text-[9px] font-mono text-[#4e5270] bg-[#1b1f2b] px-1.5 py-0.5 rounded">
                               {projSessions.length}
                             </span>
                           </div>
@@ -498,15 +508,15 @@ export default function Sidebar({
                                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <button
                                           onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
-                                          className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80]"
+                                          className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
                                         >
-                                          <RotateCcw size={12} />
+                                          ↻
                                         </button>
                                         <button
                                           onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
-                                          className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400"
+                                          className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
                                         >
-                                          <Trash2 size={12} />
+                                          🗑
                                         </button>
                                       </div>
                                     )}
@@ -515,7 +525,7 @@ export default function Sidebar({
                               })}
                               <div
                                 className="flex items-center gap-1 px-2 py-1 text-[10px] text-[#4e5270] cursor-pointer rounded-md"
-                                onClick={() => setShowAgentSelect({ env, project: projects.find(p => p.path === projSessions[0]?.projectPath) })}
+                                onClick={() => setShowNewSession(true)}
                                 onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
                                 onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
                               >
@@ -567,15 +577,15 @@ export default function Sidebar({
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
                                 onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
-                                className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80]"
+                                className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
                               >
-                                <RotateCcw size={12} />
+                                ↻
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
-                                className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400"
+                                className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
                               >
-                                <Trash2 size={12} />
+                                🗑
                               </button>
                             </div>
                           )}
@@ -586,7 +596,7 @@ export default function Sidebar({
                     {/* New session in env */}
                     <div
                       className="flex items-center gap-1.25 px-2 py-1.25 text-[11px] text-[#4e5270] cursor-pointer rounded-md mt-0.5"
-                      onClick={() => setShowAgentSelect({ env })}
+                      onClick={() => setShowNewSession(true)}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.color = '#E8915A'
                         e.currentTarget.style.background = 'rgba(232, 145, 90, 0.08)'
@@ -616,14 +626,7 @@ export default function Sidebar({
       {/* Bottom */}
       <div className="px-2.5 py-2 border-t border-[#1d2030] flex flex-col gap-1">
         <button
-          onClick={() => {
-            const localEnv = envs.find(e => e.type === 'local')
-            if (localEnv) {
-              setShowAgentSelect({ env: localEnv })
-            } else {
-              setShowAddServer(true)
-            }
-          }}
+          onClick={() => setShowNewSession(true)}
           className="w-full py-2.5 rounded-lg border border-[#E8915A]/30 bg-gradient-to-br from-[#E8915A]/[0.09] to-[#E8915A]/[0.03] text-[#E8915A] text-[12.5px] font-semibold flex items-center justify-center gap-1.5 hover:from-[#E8915A]/[0.15] hover:to-[#E8915A]/[0.06] transition-all cursor-pointer"
         >
           ＋ 新建会话
@@ -658,26 +661,18 @@ export default function Sidebar({
         />
       )}
 
-      {showAddProject && (
-        <AddProjectModal
+      {showNewSession && (
+        <NewSessionModal
           envs={envs}
-          onClose={() => setShowAddProject(false)}
-          onCreated={() => {
-            setShowAddProject(false)
-            loadProjects()
-          }}
-        />
-      )}
-
-      {showAgentSelect && (
-        <AgentSelectModal
-          env={showAgentSelect.env}
           projects={projects}
-          preselectedProject={showAgentSelect.project}
-          onClose={() => setShowAgentSelect(null)}
-          onSelectAgent={(agentId, projectId, projectPath) => {
-            createSessionWithAgent(showAgentSelect!.env, agentId, projectId, projectPath)
-            setShowAgentSelect(null)
+          onClose={() => setShowNewSession(false)}
+          onCreateSession={(env, agentId, projectId, projectPath) => {
+            createSessionWithAgent(env, agentId, projectId, projectPath)
+            setShowNewSession(false)
+          }}
+          onCreateSshSession={(env, agentId, projectId, projectPath, password) => {
+            createSshSessionWithAgent(env, agentId, projectId, projectPath, password)
+            setShowNewSession(false)
           }}
         />
       )}
@@ -711,7 +706,7 @@ export default function Sidebar({
 // Session badge component
 function SessionBadge({ s }: { s: Session }) {
   return (
-    <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+    <div className="flex flex-col items-end justify-center gap-0.5 flex-shrink-0 min-h-[34px]">
       <span
         className="text-[8.5px] px-1.5 py-0.5 rounded"
         style={{
@@ -721,12 +716,14 @@ function SessionBadge({ s }: { s: Session }) {
       >
         {s.mode === 'chat' ? '💬' : '⌨'}
       </span>
-      {s.status === 'connected' && s.statusText && (
-        <span className="text-[9px] text-[#4ADE80] font-medium">{s.statusText}</span>
-      )}
-      {s.status === 'disconnected' && (
-        <span className="text-[9px] text-[#60A5FA]">✓ 已断开</span>
-      )}
+      <span className="text-[9px] min-h-[12px]">
+        {s.status === 'connected' && s.statusText && (
+          <span className="text-[#4ADE80] font-medium">{s.statusText}</span>
+        )}
+        {s.status === 'disconnected' && (
+          <span className="text-[#60A5FA]">✓ 已断开</span>
+        )}
+      </span>
     </div>
   )
 }
@@ -785,7 +782,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
 
   const handleSubmit = async () => {
     if (!name || !host || !username) {
-      setError('Please fill in all required fields')
+      setError('请填写所有必填字段')
       return
     }
     setLoading(true)
@@ -812,238 +809,594 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-[#0f1117] rounded-lg p-5 w-96 border border-[#1e2130]">
-        <h3 className="text-lg font-semibold mb-4">Add SSH Environment</h3>
-        {error && <div className="mb-3 p-2 bg-red-600/20 border border-red-600/50 rounded text-xs text-red-400">{error}</div>}
-        <div className="space-y-3">
+    <div className="fixed inset-0 bg-black/55 flex items-center justify-center z-50 backdrop-blur-sm">
+      <div className="bg-[#1b1f2b] rounded-2xl w-[420px] border border-[#282d3e] overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-[#1d2030]">
+          <div className="text-base font-semibold">☁️ 添加 SSH 环境</div>
+          <div className="text-xs text-[#4e5270] mt-1">配置远程服务器连接</div>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-3">
+          {error && (
+            <div className="p-2.5 bg-[#F87171]/10 border border-[#F87171]/30 rounded-lg text-xs text-[#F87171]">
+              {error}
+            </div>
+          )}
+
           <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="My Server"
-              className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm" />
+            <label className="block text-xs text-[#8b8fa7] mb-1.5">环境名称 *</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例如：生产服务器"
+              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+            />
           </div>
-          <div className="flex gap-2">
+
+          <div className="flex gap-3">
             <div className="flex-1">
-              <label className="block text-xs text-[#8b8fa7] mb-1">Host *</label>
-              <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.1"
-                className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm" />
+              <label className="block text-xs text-[#8b8fa7] mb-1.5">主机地址 *</label>
+              <input
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="192.168.1.100"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+              />
             </div>
             <div className="w-20">
-              <label className="block text-xs text-[#8b8fa7] mb-1">Port</label>
-              <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="22"
-                className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm" />
+              <label className="block text-xs text-[#8b8fa7] mb-1.5">端口</label>
+              <input
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                placeholder="22"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+              />
             </div>
           </div>
+
           <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Username *</label>
-            <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="root"
-              className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm" />
+            <label className="block text-xs text-[#8b8fa7] mb-1.5">用户名 *</label>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="root"
+              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+            />
           </div>
+
           <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Auth Type</label>
+            <label className="block text-xs text-[#8b8fa7] mb-1.5">认证方式</label>
             <div className="flex gap-2">
-              <button onClick={() => setAuthType('key')}
-                className={`flex-1 py-2 rounded text-sm ${authType === 'key' ? 'bg-blue-600 text-white' : 'bg-[#161822] text-[#8b8fa7]'}`}>
-                Private Key
+              <button
+                onClick={() => setAuthType('key')}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  authType === 'key'
+                    ? 'bg-[#E8915A]/20 border border-[#E8915A]/50 text-[#E8915A]'
+                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A]/50'
+                }`}
+              >
+                🔑 密钥
               </button>
-              <button onClick={() => setAuthType('password')}
-                className={`flex-1 py-2 rounded text-sm ${authType === 'password' ? 'bg-blue-600 text-white' : 'bg-[#161822] text-[#8b8fa7]'}`}>
-                Password
+              <button
+                onClick={() => setAuthType('password')}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  authType === 'password'
+                    ? 'bg-[#E8915A]/20 border border-[#E8915A]/50 text-[#E8915A]'
+                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A]/50'
+                }`}
+              >
+                🔐 密码
               </button>
             </div>
           </div>
+
           {authType === 'key' && (
             <div>
-              <label className="block text-xs text-[#8b8fa7] mb-1">Private Key Path</label>
-              <input value={privateKeyPath} onChange={(e) => setPrivateKeyPath(e.target.value)} placeholder="~/.ssh/id_rsa"
-                className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm" />
+              <label className="block text-xs text-[#8b8fa7] mb-1.5">私钥路径</label>
+              <input
+                value={privateKeyPath}
+                onChange={(e) => setPrivateKeyPath(e.target.value)}
+                placeholder="~/.ssh/id_rsa"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm font-mono outline-none focus:border-[#E8915A]"
+              />
+              <div className="text-[10px] text-[#4e5270] mt-1.5">留空则使用默认密钥 (~/.ssh/id_rsa)</div>
             </div>
           )}
-        </div>
-        <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130]">Cancel</button>
-          <button onClick={handleSubmit} disabled={loading} className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500 disabled:opacity-50">
-            {loading ? 'Adding...' : 'Add Environment'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
 
-// Add Project Modal
-function AddProjectModal({ envs, onClose, onCreated }: { envs: Env[]; onClose: () => void; onCreated: () => void }) {
-  const [name, setName] = useState('')
-  const [path, setPath] = useState('')
-  const [envId, setEnvId] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    if (envs.length > 0 && !envId) setEnvId(envs[0].id)
-  }, [envs, envId])
-
-  const handleSubmit = async () => {
-    if (!name || !path || !envId) {
-      setError('Please fill in all required fields')
-      return
-    }
-    setLoading(true)
-    setError('')
-    try {
-      await invoke('create_project', { req: { name, path, env_id: envId } })
-      onCreated()
-    } catch (err: any) {
-      setError(err.toString())
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-[#0f1117] rounded-lg p-5 w-96 border border-[#1e2130]">
-        <h3 className="text-lg font-semibold mb-4">Add Project</h3>
-        {error && <div className="mb-3 p-2 bg-red-600/20 border border-red-600/50 rounded text-xs text-red-400">{error}</div>}
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Project Name *</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="my-project"
-              className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm" />
-          </div>
-          <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Path *</label>
-            <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/projects/my-project"
-              className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] text-sm font-mono" />
-          </div>
-          <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Environment *</label>
-            <select value={envId} onChange={(e) => setEnvId(e.target.value)}
-              className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white text-sm">
-              {envs.map(env => (
-                <option key={env.id} value={env.id}>
-                  {env.type === 'local' ? '💻' : '☁️'} {env.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130]">Cancel</button>
-          <button onClick={handleSubmit} disabled={loading} className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500 disabled:opacity-50">
-            {loading ? 'Adding...' : 'Add Project'}
-          </button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Agent Select Modal
-function AgentSelectModal({
-  env,
-  projects,
-  preselectedProject,
-  onClose,
-  onSelectAgent,
-}: {
-  env: Env
-  projects: Project[]
-  preselectedProject?: Project
-  onClose: () => void
-  onSelectAgent: (agentId: string, projectId?: string, projectPath?: string) => void
-}) {
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
-  const [selectedProject, setSelectedProject] = useState<Project | null>(preselectedProject || null)
-
-  const envProjects = projects.filter(p => p.env_id === env.id)
-  const selectedAgentConfig = AGENTS.find(a => a.id === selectedAgent)
-
-  const handleConfirm = () => {
-    if (!selectedAgent) return
-    const agent = AGENTS.find(a => a.id === selectedAgent)
-    if (agent?.needsProject && !selectedProject) return
-    onSelectAgent(selectedAgent, selectedProject?.name, selectedProject?.path)
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-[#0f1117] rounded-lg p-5 w-96 border border-[#1e2130]">
-        <h3 className="text-lg font-semibold mb-1">新建会话</h3>
-        <p className="text-xs text-[#4e5270] mb-4">
-          环境: {env.type === 'local' ? '💻' : '☁️'} {env.name}
-        </p>
-
-        <div className="space-y-3">
-          <div>
-            <label className="block text-xs text-[#8b8fa7] mb-2">选择 Agent</label>
-            <div className="space-y-1">
-              {AGENTS.map(agent => (
-                <button
-                  key={agent.id}
-                  onClick={() => setSelectedAgent(agent.id)}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                    selectedAgent === agent.id
-                      ? 'bg-[#E8915A]/20 border border-[#E8915A]/50'
-                      : 'bg-[#161822] border border-transparent hover:border-[#1e2130]'
-                  }`}
-                >
-                  <div className="w-2 h-4 rounded" style={{ backgroundColor: agent.color }} />
-                  <span className="flex-1 text-[#e2e4ed]">{agent.name}</span>
-                  {agent.needsProject ? (
-                    <Folder size={12} className="text-[#60A5FA]" />
-                  ) : (
-                    <span className="text-[10px] text-[#C084FC]">独立</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {selectedAgentConfig?.needsProject && (
-            <div>
-              <label className="block text-xs text-[#8b8fa7] mb-2">选择项目</label>
-              {envProjects.length > 0 ? (
-                <div className="space-y-1 max-h-40 overflow-y-auto">
-                  {envProjects.map(project => (
-                    <button
-                      key={project.id}
-                      onClick={() => setSelectedProject(project)}
-                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                        selectedProject?.id === project.id
-                          ? 'bg-[#E8915A]/20 border border-[#E8915A]/50'
-                          : 'bg-[#161822] border border-transparent hover:border-[#1e2130]'
-                      }`}
-                    >
-                      <Folder size={14} className="text-[#E8915A]" />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[#e2e4ed] font-mono text-xs truncate">{project.path}</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-xs text-[#4e5270] p-3 bg-[#161822] rounded-lg">
-                  该环境下暂无注册项目。请先添加项目。
-                </div>
-              )}
+          {authType === 'password' && (
+            <div className="p-3 bg-[#FBBF24]/10 border border-[#FBBF24]/30 rounded-lg">
+              <div className="text-xs text-[#FBBF24] font-medium">⚠️ 密码认证说明</div>
+              <div className="text-[11px] text-[#8b8fa7] mt-1">
+                选择密码认证时，每次建立连接都需要输入密码。建议使用密钥认证以获得更好的体验。
+              </div>
             </div>
           )}
         </div>
 
-        <div className="flex gap-2 mt-4">
-          <button onClick={onClose} className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130]">
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-[#1d2030] flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-sm font-medium hover:bg-[#222738] transition-colors"
+          >
             取消
           </button>
           <button
-            onClick={handleConfirm}
-            disabled={!selectedAgent || (selectedAgentConfig?.needsProject && !selectedProject)}
-            className="flex-1 px-3 py-2 bg-gradient-to-r from-[#E8915A] to-[#D46A28] rounded text-sm text-white disabled:opacity-50"
+            onClick={handleSubmit}
+            disabled={loading}
+            className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white text-sm font-semibold disabled:opacity-50 transition-colors"
           >
-            创建会话
+            {loading ? '添加中...' : '添加环境'}
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+// New Session Modal - Multi-step wizard
+function NewSessionModal({
+  envs,
+  projects,
+  onClose,
+  onCreateSession,
+  onCreateSshSession,
+}: {
+  envs: Env[]
+  projects: Project[]
+  onClose: () => void
+  onCreateSession: (env: Env, agentId: string, projectId?: string, projectPath?: string) => void
+  onCreateSshSession: (env: Env, agentId: string, projectId?: string, projectPath?: string, password?: string) => void
+}) {
+  const [step, setStep] = useState<'intent' | 'project' | 'agent' | 'env'>('intent')
+  const [intent, setIntent] = useState<'project' | 'chat' | 'terminal' | null>(null)
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [selectedEnv, setSelectedEnv] = useState<Env | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [browseEnv, setBrowseEnv] = useState<Env | null>(null)
+  const [browseDir, setBrowseDir] = useState('')
+
+  // Agent definitions
+  const PROJECT_AGENTS = AGENTS.filter(a => a.needsProject)
+  const CHAT_AGENTS = AGENTS.filter(a => !a.needsProject)
+
+  const reset = () => {
+    setStep('intent')
+    setIntent(null)
+    setSelectedProject(null)
+    setSelectedAgent(null)
+    setSelectedEnv(null)
+    setBrowsing(false)
+    setBrowseEnv(null)
+    setBrowseDir('')
+  }
+
+  const goBack = () => {
+    if (browsing) {
+      setBrowsing(false)
+      setBrowseEnv(null)
+      setBrowseDir('')
+      return
+    }
+    if (step === 'agent' && intent === 'project') {
+      setStep('project')
+      setSelectedAgent(null)
+      return
+    }
+    reset()
+  }
+
+  const handleIntent = (i: 'project' | 'chat' | 'terminal') => {
+    setIntent(i)
+    if (i === 'project') setStep('project')
+    else if (i === 'chat') setStep('agent')
+    else if (i === 'terminal') setStep('env')
+  }
+
+  const handlePickProject = (p: Project) => {
+    setSelectedProject(p)
+    const env = envs.find(e => e.id === p.env_id)
+    if (env) setSelectedEnv(env)
+    setStep('agent')
+  }
+
+  const handleBrowseConfirm = async () => {
+    if (!browseEnv || !browseDir.trim()) return
+    const name = browseDir.trim().split('/').pop() || browseDir.trim()
+    // Create project in database
+    try {
+      await invoke('create_project', {
+        req: { name, path: browseDir.trim(), env_id: browseEnv.id }
+      })
+    } catch (err) {
+      console.error('Failed to create project:', err)
+    }
+    setSelectedProject({ id: name, name, path: browseDir.trim(), env_id: browseEnv.id } as Project)
+    setSelectedEnv(browseEnv)
+    setBrowsing(false)
+    setStep('agent')
+  }
+
+  const handleLaunch = () => {
+    if (!selectedEnv) return
+    if (intent === 'terminal') {
+      // Pure terminal session - pass null for agentId
+      onCreateSession(selectedEnv, null as any, undefined, undefined)
+    } else if (intent === 'chat' && selectedAgent) {
+      onCreateSession(selectedEnv, selectedAgent, undefined, undefined)
+    } else if (intent === 'project' && selectedAgent) {
+      onCreateSession(selectedEnv, selectedAgent, selectedProject?.name, selectedProject?.path)
+    }
+  }
+
+  const canLaunch =
+    (intent === 'project' && selectedProject && selectedAgent) ||
+    (intent === 'chat' && selectedAgent) ||
+    (intent === 'terminal' && selectedEnv)
+
+  const getSummary = () => {
+    const parts: string[] = []
+    if (selectedEnv) parts.push(`${selectedEnv.type === 'local' ? '💻' : '☁️'} ${selectedEnv.name}`)
+    if (selectedProject) parts.push(`📁 ${selectedProject.name}`)
+    if (selectedAgent) {
+      const agent = AGENTS.find(a => a.id === selectedAgent)
+      if (agent) parts.push(agent.name)
+    }
+    if (intent === 'terminal') parts.push('纯终端')
+    return parts.join('  ›  ')
+  }
+
+  const getStepTitle = () => {
+    if (step === 'intent') return { title: '🚀 新建会话', sub: '你想做什么？' }
+    if (step === 'project') {
+      if (browsing) return { title: '📂 浏览目录', sub: browseEnv ? '输入工作目录路径' : '在哪个环境上？' }
+      return { title: '📁 选择项目', sub: '选择一个工作目录，或浏览新目录' }
+    }
+    if (step === 'agent') {
+      if (intent === 'project') {
+        return { title: '🤖 选择 Agent', sub: `项目: ${selectedProject?.name} · ${selectedEnv?.type === 'local' ? '💻' : '☁️'} ${selectedEnv?.name}` }
+      }
+      return { title: '🤖 选择 Agent', sub: '选择一个 AI 对话助手' }
+    }
+    if (step === 'env') return { title: '🖥 选择环境', sub: '连接到哪台机器？' }
+    return { title: '🚀 新建会话', sub: '' }
+  }
+
+  const t = getStepTitle()
+
+  return (
+    <div className="fixed inset-0 bg-black/55 flex items-center justify-center z-50 backdrop-blur-sm">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[520px] bg-[#1b1f2b] border border-[#282d3e] rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]"
+      >
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-[#1d2030] flex-shrink-0">
+          <div className="text-base font-semibold">{t.title}</div>
+          <div className="text-xs text-[#4e5270] mt-1">{t.sub}</div>
+        </div>
+
+        {/* Breadcrumb */}
+        {step !== 'intent' && (
+          <div className="px-5 py-2 border-b border-[#1d2030] flex items-center gap-2 text-[11px] text-[#4e5270] flex-shrink-0">
+            <span
+              onClick={reset}
+              className="cursor-pointer hover:text-[#E8915A]"
+            >
+              {intent === 'project' ? '📁 项目编码' : intent === 'chat' ? '💬 AI 对话' : '🖥 纯终端'}
+            </span>
+            {step === 'agent' && selectedProject && (
+              <>
+                <span>›</span>
+                <span
+                  onClick={() => { setStep('project'); setSelectedAgent(null); }}
+                  className="cursor-pointer hover:text-[#E8915A]"
+                >
+                  {selectedProject.name}
+                </span>
+              </>
+            )}
+            {selectedAgent && (
+              <>
+                <span>›</span>
+                <span style={{ color: AGENTS.find(a => a.id === selectedAgent)?.color }}>
+                  {AGENTS.find(a => a.id === selectedAgent)?.name}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="p-5 flex flex-col gap-2 overflow-y-auto flex-1">
+          {/* Step: Intent */}
+          {step === 'intent' && (
+            <>
+              <IntentCard
+                icon="📁"
+                title="在项目中编码"
+                desc="选择目录 → 选择 Agent → 开始编码"
+                onClick={() => handleIntent('project')}
+              />
+              <IntentCard
+                icon="💬"
+                title="开一个 AI 对话"
+                desc="无需项目目录，直接与 AI 交流"
+                onClick={() => handleIntent('chat')}
+              />
+              <IntentCard
+                icon="🖥️"
+                title="打开纯终端"
+                desc="SSH / 本地 Shell，不启动 Agent"
+                onClick={() => handleIntent('terminal')}
+              />
+            </>
+          )}
+
+          {/* Step: Pick Project */}
+          {step === 'project' && !browsing && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">最近使用的项目</div>
+              {projects.slice(0, 5).map((p) => {
+                const env = envs.find(e => e.id === p.env_id)
+                const isOffline = env?.status === 'offline'
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => !isOffline && handlePickProject(p)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer bg-[#151820] border border-transparent hover:border-[#282d3e] ${isOffline ? 'opacity-40 cursor-default' : ''}`}
+                  >
+                    <span className="text-sm">📁</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-medium font-mono">{p.name}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1b1f2b] text-[#4e5270]">
+                          {env?.type === 'local' ? '💻' : '☁️'} {env?.name}
+                        </span>
+                        <span className="text-[10px] text-[#4e5270] font-mono">{p.path}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+
+              {/* Browse new directory */}
+              <div
+                onClick={() => setBrowsing(true)}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A] hover:text-[#E8915A] transition-colors mt-2"
+              >
+                <span className="text-base">📂</span>
+                <div>
+                  <div className="text-[13px] font-medium">浏览新目录...</div>
+                  <div className="text-[11px] text-[#4e5270]">选择环境，输入路径，自动记为项目</div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Sub-flow: Browse directory */}
+          {step === 'project' && browsing && !browseEnv && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择环境</div>
+              {envs.map((e) => (
+                <EnvCard
+                  key={e.id}
+                  env={e}
+                  selected={false}
+                  disabled={e.status === 'offline'}
+                  onClick={() => setBrowseEnv(e)}
+                />
+              ))}
+            </>
+          )}
+
+          {step === 'project' && browsing && browseEnv && (
+            <>
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[#151820]">
+                <span className="text-base">{browseEnv.type === 'local' ? '💻' : '☁️'}</span>
+                <span className="text-[13px] font-medium">{browseEnv.name}</span>
+                <span
+                  onClick={() => setBrowseEnv(null)}
+                  className="ml-auto text-[11px] text-[#4e5270] cursor-pointer hover:text-[#E8915A]"
+                >
+                  更换
+                </span>
+              </div>
+
+              <div className="mt-2">
+                <div className="text-[11px] text-[#4e5270] mb-2">输入工作目录的绝对路径</div>
+                <input
+                  value={browseDir}
+                  onChange={(e) => setBrowseDir(e.target.value)}
+                  placeholder="~/my-project  或  /home/user/project"
+                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] font-mono text-[13px] outline-none focus:border-[#E8915A]"
+                  autoFocus
+                />
+                {browseDir.trim() && (
+                  <div className="mt-3 px-4 py-3 rounded-lg bg-[#151820] border border-[#1d2030]">
+                    <div className="text-[11px] text-[#4e5270] mb-2">将创建为项目</div>
+                    <div className="flex items-center gap-2">
+                      <span>📁</span>
+                      <span className="text-[13px] font-mono font-medium">{browseDir.trim().split('/').pop() || browseDir.trim()}</span>
+                      <span className="text-[11px] text-[#4e5270]">on {browseEnv.type === 'local' ? '💻' : '☁️'} {browseEnv.name}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Step: Pick Agent (for project) */}
+          {step === 'agent' && intent === 'project' && (
+            <>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#151820] mb-2">
+                <span>📁</span>
+                <span className="text-[12px] font-mono font-medium">{selectedProject?.name}</span>
+                <span className="text-[10px] text-[#4e5270]">{selectedEnv?.type === 'local' ? '💻' : '☁️'} {selectedEnv?.name} · {selectedProject?.path}</span>
+              </div>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择 Agent</div>
+              {PROJECT_AGENTS.map((a) => (
+                <AgentCard
+                  key={a.id}
+                  agent={a}
+                  selected={selectedAgent === a.id}
+                  onClick={() => setSelectedAgent(a.id)}
+                />
+              ))}
+            </>
+          )}
+
+          {/* Step: Pick Agent (for chat) */}
+          {step === 'agent' && intent === 'chat' && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择 Agent</div>
+              {CHAT_AGENTS.map((a) => (
+                <AgentCard
+                  key={a.id}
+                  agent={a}
+                  selected={selectedAgent === a.id}
+                  onClick={() => setSelectedAgent(a.id)}
+                />
+              ))}
+
+              {selectedAgent && (
+                <>
+                  <div className="h-px bg-[#1d2030] my-2" />
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">运行环境（可选）</div>
+                  <div className="text-[11px] text-[#4e5270] mb-1">独立对话默认本地运行，也可以选择远程环境</div>
+                  {envs.filter(e => e.status === 'online').map((e) => (
+                    <EnvCard
+                      key={e.id}
+                      env={e}
+                      selected={selectedEnv?.id === e.id}
+                      onClick={() => setSelectedEnv(selectedEnv?.id === e.id ? null : e)}
+                    />
+                  ))}
+                </>
+              )}
+            </>
+          )}
+
+          {/* Step: Pick Env (for terminal) */}
+          {step === 'env' && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择环境</div>
+              {envs.map((e) => (
+                <EnvCard
+                  key={e.id}
+                  env={e}
+                  selected={selectedEnv?.id === e.id}
+                  disabled={e.status === 'offline'}
+                  onClick={() => setSelectedEnv(e)}
+                />
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-[#1d2030] flex items-center gap-3 flex-shrink-0">
+          <button
+            onClick={step === 'intent' ? onClose : goBack}
+            className="px-4 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-[12px] font-medium hover:bg-[#222738] transition-colors"
+          >
+            {step === 'intent' ? '取消' : '← 返回'}
+          </button>
+
+          <div className="flex-1 text-[11px] text-[#4e5270] font-mono text-center truncate">
+            {getSummary()}
+          </div>
+
+          {browsing && browseEnv && browseDir.trim() ? (
+            <button
+              onClick={handleBrowseConfirm}
+              className="px-5 py-2 rounded-lg bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white text-[12px] font-semibold shadow-lg"
+            >
+              确认目录 →
+            </button>
+          ) : (
+            <button
+              onClick={handleLaunch}
+              disabled={!canLaunch}
+              className={`px-5 py-2 rounded-lg text-[12px] font-semibold ${
+                canLaunch
+                  ? 'bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white shadow-lg'
+                  : 'bg-[#222738] text-[#4e5270]'
+              }`}
+            >
+              🚀 启动
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Intent Card Component
+function IntentCard({ icon, title, desc, onClick }: { icon: string; title: string; desc: string; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-4 px-4 py-3.5 rounded-xl cursor-pointer bg-[#151820] border border-transparent hover:border-[#E8915A] hover:bg-[#1b1f2b] transition-all"
+    >
+      <span className="text-[28px] w-11 text-center">{icon}</span>
+      <div className="flex-1">
+        <div className="text-[14px] font-semibold">{title}</div>
+        <div className="text-[12px] text-[#4e5270] mt-0.5">{desc}</div>
+      </div>
+      <span className="text-sm text-[#4e5270]">→</span>
+    </div>
+  )
+}
+
+// Agent Card Component
+function AgentCard({ agent, selected, onClick }: { agent: typeof AGENTS[0]; selected: boolean; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg cursor-pointer transition-colors ${
+        selected
+          ? 'bg-[#E8915A]/[0.09] border border-[#E8915A]/60'
+          : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
+      }`}
+    >
+      <div className="w-1.5 h-5.5 rounded" style={{ backgroundColor: agent.color }} />
+      <div className="flex-1">
+        <div className="text-[13px] font-medium">{agent.name}</div>
+        <div className="text-[11px] text-[#4e5270]">{agent.short}</div>
+      </div>
+      {selected && <span style={{ color: agent.color }} className="text-base">✓</span>}
+    </div>
+  )
+}
+
+// Env Card Component
+function EnvCard({ env, selected, disabled, onClick }: { env: Env; selected: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <div
+      onClick={disabled ? undefined : onClick}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg ${
+        disabled ? 'cursor-default opacity-35' : 'cursor-pointer'
+      } ${
+        selected
+          ? 'bg-[#E8915A]/[0.12] border border-[#E8915A]/60'
+          : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
+      } transition-colors`}
+    >
+      <span className="text-lg">{env.type === 'local' ? '💻' : '☁️'}</span>
+      <div className="flex-1">
+        <div className="text-[13px] font-medium">{env.name}</div>
+        <div className="text-[10px] text-[#4e5270] font-mono">{env.host || 'localhost'}</div>
+      </div>
+      {disabled && <span className="text-[10px] text-[#F87171]">离线</span>}
+      {!disabled && (
+        <div className="w-[7px] h-[7px] rounded-full bg-[#4ADE80] shadow-sm shadow-[#4ADE80]" />
+      )}
+      {selected && <span className="text-[#E8915A] text-base">✓</span>}
     </div>
   )
 }
