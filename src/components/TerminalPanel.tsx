@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { listen, Event } from '@tauri-apps/api/event'
@@ -19,7 +19,9 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const fitAddonRef = useRef<FitAddon | null>(null)
   const unlistenRef = useRef<(() => void) | null>(null)
   const disposableRef = useRef<{ dispose: () => void } | null>(null)
-  const listenerSetupRef = useRef<{ cancelled: boolean }>({ cancelled: false })
+  const listenerSetupRef = useRef<{ cancelled: boolean; sessionId: string | null }>({ cancelled: false, sessionId: null })
+  const resizeObserverRef = useRef<ResizeObserver | null>(null)
+  const isContainerVisibleRef = useRef(false)
 
   // Refs to track latest values for clipboard handlers
   const sessionsRef = useRef(sessions)
@@ -31,6 +33,14 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     sessionsRef.current = sessions
     activeSessionIdRef.current = activeSessionId
   }, [sessions, activeSessionId])
+
+  // Fit terminal function
+  const fitTerminal = useCallback(() => {
+    if (fitAddonRef.current && terminalRef.current && isContainerVisibleRef.current) {
+      fitAddonRef.current.fit()
+      terminalRef.current.scrollToBottom()
+    }
+  }, [])
 
   // Initialize terminal
   useEffect(() => {
@@ -62,9 +72,15 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     terminal.loadAddon(fitAddon)
 
     terminal.open(containerRef.current)
-    fitAddon.fit()
-    // Ensure scrollbar is at bottom after initial render
-    terminal.scrollToBottom()
+
+    // Initial fit after a short delay to ensure container is visible
+    setTimeout(() => {
+      if (containerRef.current && !containerRef.current.classList.contains('invisible')) {
+        fitAddon.fit()
+        terminal.scrollToBottom()
+        isContainerVisibleRef.current = true
+      }
+    }, 100)
 
     // Handle clipboard shortcuts
     terminal.onKey(({ domEvent, key }) => {
@@ -72,17 +88,14 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       if (domEvent.ctrlKey && (domEvent.key === 'c' || key === '\x03')) {
         const selection = terminal.getSelection()
         if (selection) {
-          // Copy to clipboard using Tauri API
           writeText(selection).catch(console.error)
           terminal.clearSelection()
-          // Set flag to prevent onData from sending ^C
           isCopyingRef.current = true
           setTimeout(() => { isCopyingRef.current = false }, 50)
           domEvent.preventDefault()
           domEvent.stopPropagation()
           return
         }
-        // No selection - let Ctrl+C through as interrupt signal
       }
 
       // Ctrl+Shift+C: Always copy selection
@@ -96,8 +109,6 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         domEvent.stopPropagation()
         return
       }
-
-      // Ctrl+V: Paste - handled by paste event listener
     })
 
     // Handle paste event
@@ -141,17 +152,27 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    // Handle resize
+    // Setup ResizeObserver to handle container size changes
+    resizeObserverRef.current = new ResizeObserver(() => {
+      if (containerRef.current && !containerRef.current.classList.contains('invisible')) {
+        isContainerVisibleRef.current = true
+        setTimeout(fitTerminal, 10)
+      }
+    })
+    resizeObserverRef.current.observe(containerRef.current)
+
+    // Handle window resize
     const handleResize = () => {
-      fitAddonRef.current?.fit()
+      fitTerminal()
       // Notify backend of resize
-      if (activeSessionId) {
-        const session = sessions.find(s => s.id === activeSessionId)
+      const currentSessionId = activeSessionIdRef.current
+      if (currentSessionId) {
+        const session = sessionsRef.current.find(s => s.id === currentSessionId)
         if (session && session.status === 'connected') {
           const dims = fitAddonRef.current?.proposeDimensions()
           if (dims) {
             invoke('resize_session', {
-              sessionId: activeSessionId,
+              sessionId: currentSessionId,
               sessionType: session.type,
               cols: dims.cols,
               rows: dims.rows,
@@ -164,7 +185,9 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     return () => {
       window.removeEventListener('resize', handleResize)
-      // Remove paste event listeners
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect()
+      }
       if (containerRef.current) {
         containerRef.current.removeEventListener('paste', handlePaste as EventListener)
         const textarea = containerRef.current.querySelector('textarea.xterm-helper-textarea')
@@ -174,11 +197,11 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       }
       terminal.dispose()
     }
-  }, [])
+  }, [fitTerminal])
 
   // Handle session change - setup data listener
   useEffect(() => {
-    if (!activeSessionId || !terminalRef.current) return
+    if (!activeSessionId || !terminalRef.current || !containerRef.current) return
 
     const activeSession = sessions.find(s => s.id === activeSessionId)
     if (!activeSession) return
@@ -187,23 +210,30 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     const currentSessionId = activeSessionId
 
     // Mark this effect as the current one
-    listenerSetupRef.current.cancelled = false
+    listenerSetupRef.current = { cancelled: false, sessionId: currentSessionId }
 
-    // Refit terminal now that container is visible
-    fitAddonRef.current?.fit()
-    // Ensure scrollbar is at bottom after session switch
-    terminal.scrollToBottom()
+    // Mark container as visible and fit
+    isContainerVisibleRef.current = true
 
-    // Sync terminal size to PTY immediately
-    const dims = fitAddonRef.current?.proposeDimensions()
-    if (dims && activeSession.status === 'connected') {
-      invoke('resize_session', {
-        sessionId: activeSessionId,
-        sessionType: activeSession.type,
-        cols: dims.cols,
-        rows: dims.rows,
-      }).catch(console.error)
-    }
+    // Use setTimeout to ensure DOM is updated before fitting
+    setTimeout(() => {
+      // Check if this is still the active session
+      if (activeSessionIdRef.current !== currentSessionId) return
+
+      fitAddonRef.current?.fit()
+      terminal.scrollToBottom()
+
+      // Sync terminal size to PTY
+      const dims = fitAddonRef.current?.proposeDimensions()
+      if (dims && activeSession.status === 'connected') {
+        invoke('resize_session', {
+          sessionId: currentSessionId,
+          sessionType: activeSession.type,
+          cols: dims.cols,
+          rows: dims.rows,
+        }).catch(console.error)
+      }
+    }, 50)
 
     // Clear and show session info
     terminal.clear()
@@ -213,8 +243,9 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     // Setup event listener for terminal data
     const setupListener = async () => {
-      // Check if this effect is still valid (not cancelled by session switch)
-      if (listenerSetupRef.current.cancelled) return
+      // Check if this effect is still valid
+      const state = listenerSetupRef.current
+      if (state.cancelled || state.sessionId !== currentSessionId) return
 
       // Clean up previous listener
       if (unlistenRef.current) {
@@ -222,30 +253,31 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         unlistenRef.current = null
       }
 
-      const unlisten = await listen(`terminal-data-${currentSessionId}`, (event: Event<unknown>) => {
-        // Ignore events for other sessions
-        if (activeSessionIdRef.current !== currentSessionId) return
+      try {
+        const unlisten = await listen(`terminal-data-${currentSessionId}`, (event: Event<unknown>) => {
+          // Ignore events for other sessions
+          if (activeSessionIdRef.current !== currentSessionId) return
 
-        if (event.payload instanceof Array) {
-          const data = new Uint8Array(event.payload as number[])
-          const decoder = new TextDecoder()
-          terminal.write(decoder.decode(data), () => {
-            terminal.scrollToBottom()
-          })
-        } else if (typeof event.payload === 'string') {
-          terminal.write(event.payload, () => {
-            terminal.scrollToBottom()
-          })
+          if (event.payload instanceof Array) {
+            const data = new Uint8Array(event.payload as number[])
+            const decoder = new TextDecoder()
+            terminal.write(decoder.decode(data))
+          } else if (typeof event.payload === 'string') {
+            terminal.write(event.payload)
+          }
+        })
+
+        // Check again after async operation
+        const currentState = listenerSetupRef.current
+        if (currentState.cancelled || currentState.sessionId !== currentSessionId) {
+          unlisten()
+          return
         }
-      })
 
-      // Check again after async operation
-      if (listenerSetupRef.current.cancelled) {
-        unlisten()
-        return
+        unlistenRef.current = unlisten
+      } catch (err) {
+        console.error('Failed to setup listener:', err)
       }
-
-      unlistenRef.current = unlisten
     }
 
     setupListener()
@@ -255,12 +287,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       disposableRef.current.dispose()
     }
     disposableRef.current = terminal.onData((data: string) => {
-      // Check if we just handled a copy operation - don't send ^C
-      if (isCopyingRef.current) {
-        return
-      }
-
-      // Check if this session is still active
+      if (isCopyingRef.current) return
       if (activeSessionIdRef.current !== currentSessionId) return
 
       const session = sessionsRef.current.find(s => s.id === currentSessionId)
@@ -274,7 +301,6 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     })
 
     return () => {
-      // Mark this effect as cancelled
       listenerSetupRef.current.cancelled = true
 
       if (disposableRef.current) {
@@ -314,7 +340,11 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         </div>
       )}
       {/* Terminal container - always in DOM so xterm can initialize on mount */}
-      <div ref={containerRef} className={`flex-1 p-2 ${activeSession ? '' : 'invisible'}`} />
+      <div
+        ref={containerRef}
+        className="flex-1 p-2"
+        style={{ visibility: activeSession ? 'visible' : 'hidden' }}
+      />
       {!activeSession && (
         <div className="absolute inset-0 flex items-center justify-center text-gray-600">
           <div className="text-center">
