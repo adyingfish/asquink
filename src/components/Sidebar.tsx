@@ -82,8 +82,16 @@ export default function Sidebar({
     try {
       const status = await invoke<string>('check_env_status', { id: envId })
       setEnvStatuses(prev => ({ ...prev, [envId]: status }))
+
+      // Show result message
+      if (status === 'online') {
+        setError('') // Clear any previous error
+      } else {
+        setError('连接失败: 无法连接到该环境')
+      }
     } catch (error) {
       console.error('Failed to check env status:', error)
+      setError('连接失败: ' + error)
     }
   }
 
@@ -376,11 +384,11 @@ export default function Sidebar({
                         e.stopPropagation()
                         checkEnvStatus(env.id)
                       }}
-                      className="text-[10px] text-[#4e5270] cursor-pointer"
+                      className="text-[10px] text-[#4e5270] cursor-pointer px-2 py-1 rounded hover:bg-[#222738]"
                       onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
                       onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
                     >
-                      重新连接
+                      ↻ 重新连接
                     </span>
                   </div>
                 )}

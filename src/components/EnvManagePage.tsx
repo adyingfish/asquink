@@ -209,18 +209,20 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 </div>
               </div>
               {selectedEnv.type !== 'local' && (
-                <button
-                  onClick={() => testConnection(selectedEnv)}
-                  disabled={testingConnection === selectedEnv.id}
-                  className="px-3.5 py-1.75 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors disabled:opacity-50"
-                >
-                  {testingConnection === selectedEnv.id ? '测试中...' : '🔗 测试连接'}
-                </button>
-              )}
-              {connectionResult?.id === selectedEnv.id && (
-                <span className={`text-xs ${connectionResult.success ? 'text-[#4ADE80]' : 'text-[#F87171]'}`}>
-                  {connectionResult.message}
-                </span>
+                <div className="flex items-center gap-3">
+                  {connectionResult?.id === selectedEnv.id && (
+                    <div className={`text-xs px-3 py-1.5 rounded-lg ${connectionResult.success ? 'bg-[#4ADE80]/10 text-[#4ADE80] border border-[#4ADE80]/30' : 'bg-[#F87171]/10 text-[#F87171] border border-[#F87171]/30'}`}>
+                      {connectionResult.success ? '✓' : '✗'} {connectionResult.message}
+                    </div>
+                  )}
+                  <button
+                    onClick={() => testConnection(selectedEnv)}
+                    disabled={testingConnection === selectedEnv.id}
+                    className="px-4 py-2.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs font-medium cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {testingConnection === selectedEnv.id ? '⏳ 测试中...' : '🔗 测试连接'}
+                  </button>
+                </div>
               )}
             </div>
 
