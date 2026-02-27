@@ -262,6 +262,22 @@ export default function Sidebar({
       p.path.toLowerCase().includes(query)
     )
     return envMatch || sessionMatch || projectMatch
+  }).sort((a, b) => {
+    // 1. Local environment always first
+    if (a.type === 'local') return -1
+    if (b.type === 'local') return 1
+
+    // 2. Environment with connecting sessions comes first
+    const aSessions = sessionsByEnv[a.id] || []
+    const bSessions = sessionsByEnv[b.id] || []
+    const aHasConnecting = aSessions.some(s => s.status === 'connecting' || s.status === 'connected')
+    const bHasConnecting = bSessions.some(s => s.status === 'connecting' || s.status === 'connected')
+
+    if (aHasConnecting && !bHasConnecting) return -1
+    if (!aHasConnecting && bHasConnecting) return 1
+
+    // 3. Keep original order
+    return 0
   })
 
   return (
