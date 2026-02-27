@@ -614,7 +614,7 @@ export default function Sidebar({
       </div>
 
       {/* Bottom */}
-      <div className="p-2 border-t border-[#1d2030] flex flex-col gap-1">
+      <div className="px-2.5 py-2 border-t border-[#1d2030] flex flex-col gap-1">
         <button
           onClick={() => {
             const localEnv = envs.find(e => e.type === 'local')
@@ -624,25 +624,25 @@ export default function Sidebar({
               setShowAddServer(true)
             }
           }}
-          className="w-full py-2.25 px-3 rounded-lg border border-[#E8915A]/30 bg-gradient-to-br from-[#E8915A]/10 to-[#E8915A]/5 text-[#E8915A] text-xs font-medium flex items-center justify-center gap-1.5 hover:border-[#E8915A]/50 transition-colors"
+          className="w-full py-2.5 rounded-lg border border-[#E8915A]/30 bg-gradient-to-br from-[#E8915A]/[0.09] to-[#E8915A]/[0.03] text-[#E8915A] text-[12.5px] font-semibold flex items-center justify-center gap-1.5 hover:from-[#E8915A]/[0.15] hover:to-[#E8915A]/[0.06] transition-all cursor-pointer"
         >
-          <Plus size={14} /> 新建会话
+          ＋ 新建会话
         </button>
         <div className="flex justify-center gap-4 py-1">
           <span
             onClick={onOpenEnvManage}
-            className="text-[11px] text-[#4e5270] cursor-pointer flex items-center gap-1"
+            className="text-[11px] text-[#4e5270] cursor-pointer"
             onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
             onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
           >
-            <Settings size={12} /> 环境管理
+            ⚙ 环境管理
           </span>
           <span
-            className="text-[11px] text-[#4e5270] cursor-pointer flex items-center gap-1"
+            className="text-[11px] text-[#4e5270] cursor-pointer"
             onMouseEnter={(e) => e.currentTarget.style.color = '#8b8fa7'}
             onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
           >
-            <Key size={12} /> API Keys
+            🔑 API Keys
           </span>
         </div>
       </div>
