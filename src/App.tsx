@@ -8,7 +8,7 @@ import EnvManagePage from './components/EnvManagePage'
 export interface Session {
   id: string
   name: string
-  type: 'local' | 'ssh'
+  type: 'local' | 'ssh' | 'wsl'
   envId?: string          // Associated environment ID
   projectId?: string      // Project name if project-based session
   projectPath?: string    // Project directory path
@@ -39,7 +39,7 @@ export interface SessionRecord {
 export interface Env {
   id: string
   name: string
-  type: 'local' | 'ssh'
+  type: 'local' | 'ssh' | 'wsl'
   host?: string
   port?: number
   username?: string
@@ -47,6 +47,8 @@ export interface Env {
   icon?: string
   status: 'online' | 'offline'
   detail?: string
+  wsl_distro?: string
+  wsl_user?: string
 }
 
 export interface Project {
@@ -157,7 +159,7 @@ function App() {
       // Reopen session in database
       await invoke('reopen_session', { sessionId: oldSession.id })
 
-      // Create PTY/SSH connection with existing ID
+      // Create PTY/SSH/WSL connection with existing ID
       if (oldSession.type === 'local') {
         await invoke('create_local_session', {
           sessionId: oldSession.id,
@@ -167,8 +169,17 @@ function App() {
           workingDir: oldSession.projectPath,
           sessionInfo: null // Don't create new DB record
         })
+      } else if (oldSession.type === 'wsl') {
+        await invoke('create_wsl_session', {
+          sessionId: oldSession.id,
+          envId: oldSession.envId,
+          cols: 80,
+          rows: 24,
+          workingDir: oldSession.projectPath,
+          sessionInfo: null
+        })
       } else {
-        // Get env config for SSH
+        // SSH session
         const envs = await invoke<{id: string, auth_type?: string}[]>('list_envs')
         const env = envs.find(e => e.id === oldSession.envId)
 

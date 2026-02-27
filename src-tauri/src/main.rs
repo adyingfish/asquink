@@ -11,16 +11,19 @@ mod database;
 mod pty;
 mod session;
 mod ssh;
+mod wsl;
 
 use database::Database;
 use pty::PtyManager;
 use ssh::{SshAuth, SshSession};
+use wsl::WslManager;
 
 // App state shared across commands
 pub struct AppState {
     db: Database,
     pty_manager: PtyManager,
     ssh_sessions: Arc<Mutex<HashMap<String, SshSession>>>,
+    wsl_manager: WslManager,
 }
 
 // New unified Env structure
@@ -37,6 +40,9 @@ pub struct Env {
     icon: Option<String>,
     status: String,
     detail: Option<String>,
+    // WSL-specific fields
+    wsl_distro: Option<String>,
+    wsl_user: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -51,6 +57,9 @@ pub struct CreateEnvRequest {
     private_key_path: Option<String>,
     passphrase: Option<String>,
     icon: Option<String>,
+    // WSL-specific fields
+    wsl_distro: Option<String>,
+    wsl_user: Option<String>,
 }
 
 // Legacy Server structure for backward compatibility
@@ -135,6 +144,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         db,
         pty_manager: PtyManager::new(),
         ssh_sessions: Arc::new(Mutex::new(HashMap::new())),
+        wsl_manager: WslManager::new(),
     };
 
     app.manage(Arc::new(Mutex::new(state)));
@@ -205,6 +215,27 @@ async fn check_env_status(state: State<'_, Arc<Mutex<AppState>>>, id: String) ->
     let status = if env.env_type == "local" {
         // Local environment is always online
         "online".to_string()
+    } else if env.env_type == "wsl" {
+        // WSL environment - check if WSL is installed and distro exists
+        if !wsl::WslManager::is_wsl_installed().await {
+            "offline".to_string()
+        } else {
+            // Check if the specific distro exists
+            if let Some(ref distro) = env.wsl_distro {
+                match wsl::WslManager::list_distros().await {
+                    Ok(distros) => {
+                        if distros.iter().any(|d| &d.name == distro) {
+                            "online".to_string()
+                        } else {
+                            "offline".to_string()
+                        }
+                    }
+                    Err(_) => "offline".to_string(),
+                }
+            } else {
+                "online".to_string()
+            }
+        }
     } else {
         // SSH environment - try TCP connection test
         let host = env.host.clone().unwrap_or_default();
@@ -444,6 +475,68 @@ async fn create_ssh_session(
     Ok(session_id)
 }
 
+// WSL-specific commands
+#[tauri::command]
+async fn list_wsl_distros() -> Result<Vec<wsl::WslDistro>, String> {
+    wsl::WslManager::list_distros().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn check_wsl_installed() -> Result<bool, String> {
+    Ok(wsl::WslManager::is_wsl_installed().await)
+}
+
+#[tauri::command]
+async fn create_wsl_session(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+    env_id: String,
+    cols: u16,
+    rows: u16,
+    working_dir: Option<String>,
+    session_info: Option<CreateSessionInfo>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    let state = state.lock().await;
+
+    // Get WSL env config from database
+    let env = state.db.get_env(&env_id).await.map_err(|e| e.to_string())?;
+
+    // Get distro and user from env config
+    let distro = env.wsl_distro.ok_or("WSL distribution not configured")?;
+    let user = env.wsl_user.as_deref();
+
+    // Create WSL session
+    state.wsl_manager.create_session(
+        &session_id,
+        &distro,
+        user,
+        cols,
+        rows,
+        working_dir,
+        app_handle,
+    ).await.map_err(|e| e.to_string())?;
+
+    // Save session to database if info provided
+    if let Some(info) = session_info {
+        let record = database::SessionRecord {
+            id: session_id.clone(),
+            name: info.name,
+            env_id: info.env_id,
+            env_type: info.env_type,
+            agent_id: info.agent_id,
+            project_id: info.project_id,
+            project_path: info.project_path,
+            working_dir: info.working_dir,
+            started_at: None,
+            ended_at: None,
+        };
+        state.db.create_session(&record).await.map_err(|e| e.to_string())?;
+    }
+
+    Ok(session_id)
+}
+
 #[tauri::command]
 async fn write_to_session(
     state: State<'_, Arc<Mutex<AppState>>>,
@@ -462,6 +555,8 @@ async fn write_to_session(
         } else {
             Err("SSH session not found".to_string())
         }
+    } else if session_type == "wsl" {
+        state.wsl_manager.write(&session_id, data.as_bytes()).await.map_err(|e| e.to_string())
     } else {
         Err("Unknown session type".to_string())
     }
@@ -486,6 +581,8 @@ async fn resize_session(
         } else {
             Err("SSH session not found".to_string())
         }
+    } else if session_type == "wsl" {
+        state.wsl_manager.resize(&session_id, cols, rows).await.map_err(|e| e.to_string())
     } else {
         Err("Unknown session type".to_string())
     }
@@ -506,6 +603,8 @@ async fn close_session(
         if let Some(mut session) = sessions.remove(&session_id) {
             session.close().await.map_err(|e| e.to_string())?
         }
+    } else if session_type == "wsl" {
+        state.wsl_manager.close_session(&session_id).await.map_err(|e| e.to_string())?
     } else {
         return Err("Unknown session type".to_string())
     }
@@ -571,6 +670,7 @@ fn main() {
             // Sessions
             create_local_session,
             create_ssh_session,
+            create_wsl_session,
             write_to_session,
             resize_session,
             close_session,
@@ -578,6 +678,9 @@ fn main() {
             delete_session_record,
             reopen_session,
             debug_sessions,
+            // WSL
+            list_wsl_distros,
+            check_wsl_installed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

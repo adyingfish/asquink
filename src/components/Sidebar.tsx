@@ -98,11 +98,13 @@ export default function Sidebar({
 
   const getEnvIcon = (env: Env) => {
     if (env.type === 'local') return '💻'
+    if (env.type === 'wsl') return '🐧'
     return '☁️'
   }
 
   const getEnvDetail = (env: Env) => {
     if (env.type === 'local') return env.detail || 'Local Machine'
+    if (env.type === 'wsl') return env.wsl_distro || 'WSL'
     if (env.host && env.username) return `${env.username}@${env.host}`
     if (env.host) return env.host
     return env.name
@@ -202,10 +204,55 @@ export default function Sidebar({
     }
   }
 
+  // 创建 WSL 会话（带 Agent 和可选项目）
+  const createWslSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
+    const sessionId = `wsl-${Date.now()}`
+    const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
+
+    onAddSession({
+      id: sessionId,
+      name: env.name,
+      type: 'wsl',
+      envId: env.id,
+      agentId: agentId || undefined,
+      projectId,
+      projectPath,
+      status: 'connecting',
+      mode: agent?.needsProject === false ? 'chat' : 'terminal',
+      statusText: '连接中...',
+    })
+
+    try {
+      await invoke('create_wsl_session', {
+        sessionId,
+        envId: env.id,
+        cols: 80,
+        rows: 24,
+        workingDir: projectPath || null,
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          envType: 'wsl',
+          agentId: agentId || null,
+          projectId,
+          projectPath,
+          workingDir: projectPath,
+        }
+      })
+      onSessionStatusChange?.(sessionId, 'connected')
+    } catch (error: any) {
+      console.error('Failed to create WSL session:', error)
+      onSessionStatusChange?.(sessionId, 'disconnected')
+      setError(`WSL connection failed: ${error}`)
+    }
+  }
+
   // 创建会话的主入口
   const createSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
     if (env.type === 'local') {
       await createLocalSessionWithAgent(env, agentId, projectId, projectPath)
+    } else if (env.type === 'wsl') {
+      await createWslSessionWithAgent(env, agentId, projectId, projectPath)
     } else if (env.auth_type === 'password') {
       // 需要密码，先保存选择，显示密码输入
       setShowPasswordPrompt(env.id)
@@ -759,8 +806,8 @@ function SessionBadge({ s }: { s: Session }) {
 
 // Password Prompt Modal
 function PasswordPromptModal({
-  envId,
-  envs,
+  envId: _envId,
+  envs: _envs,
   password,
   setPassword,
   onClose,
@@ -971,7 +1018,7 @@ function NewSessionModal({
   projects,
   onClose,
   onCreateSession,
-  onCreateSshSession,
+  onCreateSshSession: _onCreateSshSession,
 }: {
   envs: Env[]
   projects: Project[]

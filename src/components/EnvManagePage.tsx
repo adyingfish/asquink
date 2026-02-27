@@ -11,6 +11,14 @@ const AGENTS = [
   { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#C084FC', needsProject: false },
 ]
 
+// WSL Distro interface
+interface WslDistro {
+  name: string
+  is_default: boolean
+  state: string
+  version: number
+}
+
 interface EnvManagePageProps {
   onBack: () => void
   onEnvChange?: () => void
@@ -24,6 +32,9 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const [showAddEnv, setShowAddEnv] = useState(false)
   const [testingConnection, setTestingConnection] = useState<string | null>(null)
   const [connectionResult, setConnectionResult] = useState<{ id: string; success: boolean; message: string } | null>(null)
+  const [addEnvType, setAddEnvType] = useState<'ssh' | 'wsl'>('ssh')
+  const [wslDistros, setWslDistros] = useState<WslDistro[]>([])
+  const [wslInstalled, setWslInstalled] = useState(false)
   const [addEnvForm, setAddEnvForm] = useState({
     name: '',
     host: '',
@@ -31,10 +42,13 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     username: '',
     auth_type: 'key' as 'key' | 'password',
     private_key_path: '',
+    wsl_distro: '',
+    wsl_user: '',
   })
 
   useEffect(() => {
     loadData()
+    checkWsl()
   }, [])
 
   const loadData = async () => {
@@ -52,6 +66,20 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       }
     } catch (error) {
       console.error('Failed to load data:', error)
+    }
+  }
+
+  const checkWsl = async () => {
+    try {
+      const installed = await invoke<boolean>('check_wsl_installed')
+      setWslInstalled(installed)
+      if (installed) {
+        const distros = await invoke<WslDistro[]>('list_wsl_distros')
+        setWslDistros(distros)
+      }
+    } catch (error) {
+      console.error('Failed to check WSL:', error)
+      setWslInstalled(false)
     }
   }
 
@@ -95,25 +123,45 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   }
 
   const handleAddEnv = async () => {
-    if (!addEnvForm.name || !addEnvForm.host) {
-      alert('请填写环境名称和主机地址')
-      return
+    if (addEnvType === 'ssh') {
+      if (!addEnvForm.name || !addEnvForm.host) {
+        alert('请填写环境名称和主机地址')
+        return
+      }
+    } else {
+      if (!addEnvForm.name || !addEnvForm.wsl_distro) {
+        alert('请填写环境名称并选择 WSL 发行版')
+        return
+      }
     }
 
     try {
-      await invoke('create_env', {
-        req: {
-          name: addEnvForm.name,
-          type: 'ssh',
-          host: addEnvForm.host,
-          port: parseInt(addEnvForm.port) || 22,
-          username: addEnvForm.username || 'root',
-          auth_type: addEnvForm.auth_type,
-          private_key_path: addEnvForm.private_key_path || null,
-          icon: 'cloud',
-        }
-      })
+      if (addEnvType === 'ssh') {
+        await invoke('create_env', {
+          req: {
+            name: addEnvForm.name,
+            type: 'ssh',
+            host: addEnvForm.host,
+            port: parseInt(addEnvForm.port) || 22,
+            username: addEnvForm.username || 'root',
+            auth_type: addEnvForm.auth_type,
+            private_key_path: addEnvForm.private_key_path || null,
+            icon: 'cloud',
+          }
+        })
+      } else {
+        await invoke('create_env', {
+          req: {
+            name: addEnvForm.name,
+            type: 'wsl',
+            wsl_distro: addEnvForm.wsl_distro,
+            wsl_user: addEnvForm.wsl_user || null,
+            icon: 'linux',
+          }
+        })
+      }
       setShowAddEnv(false)
+      setAddEnvType('ssh')
       setAddEnvForm({
         name: '',
         host: '',
@@ -121,6 +169,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
         username: '',
         auth_type: 'key',
         private_key_path: '',
+        wsl_distro: '',
+        wsl_user: '',
       })
       loadData()
       onEnvChange?.()
@@ -150,13 +200,18 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
         {/* Left: Env list */}
         <div className="w-[260px] border-r border-[#1d2030] overflow-y-auto p-3">
           {[...envs].sort((a, b) => {
-            // Local environment always first
+            // Local environment always first, WSL second, SSH last
             if (a.type === 'local') return -1
             if (b.type === 'local') return 1
+            if (a.type === 'wsl') return -1
+            if (b.type === 'wsl') return 1
             return 0
           }).map(env => {
             const isSelected = selectedEnvId === env.id
             const isLocal = env.type === 'local'
+            const isWsl = env.type === 'wsl'
+            const envIcon = isLocal ? '💻' : isWsl ? '🐧' : '☁️'
+            const envDetail = isLocal ? (env.detail || 'localhost') : isWsl ? (env.wsl_distro || 'WSL') : (env.host || '-')
             return (
               <div
                 key={env.id}
@@ -167,11 +222,11 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                     : 'border border-transparent hover:bg-[#222738]'
                 }`}
               >
-                <span className="text-xl">{isLocal ? '💻' : '☁️'}</span>
+                <span className="text-xl">{envIcon}</span>
                 <div className="flex-1 min-w-0">
                   <div className="text-[13px] font-medium">{env.name}</div>
                   <div className="text-[10.5px] text-[#4e5270] font-mono truncate">
-                    {isLocal ? (env.detail || 'localhost') : (env.host || '-')}
+                    {envDetail}
                   </div>
                 </div>
                 <div
@@ -199,7 +254,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
           <div className="flex-1 overflow-y-auto p-5">
             <div className="flex items-center gap-3.5 mb-6">
               <div className="w-12 h-12 rounded-xl bg-[#1b1f2b] flex items-center justify-center text-3xl border border-[#282d3e]">
-                {selectedEnv.type === 'local' ? '💻' : '☁️'}
+                {selectedEnv.type === 'local' ? '💻' : selectedEnv.type === 'wsl' ? '🐧' : '☁️'}
               </div>
               <div className="flex-1">
                 <div className="text-lg font-semibold flex items-center gap-2">
@@ -213,8 +268,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   />
                 </div>
                 <div className="text-xs text-[#4e5270] font-mono mt-0.5">
-                  {selectedEnv.type === 'local' ? 'Local' : 'SSH'} · {selectedEnv.detail || selectedEnv.host || 'localhost'}
-                  {selectedEnv.port && `:${selectedEnv.port}`}
+                  {selectedEnv.type === 'local' ? 'Local' : selectedEnv.type === 'wsl' ? 'WSL' : 'SSH'} · {selectedEnv.type === 'wsl' ? (selectedEnv.wsl_distro || '-') : (selectedEnv.detail || selectedEnv.host || 'localhost')}
+                  {selectedEnv.type === 'ssh' && selectedEnv.port && `:${selectedEnv.port}`}
                 </div>
               </div>
               {selectedEnv.type !== 'local' && (
@@ -239,10 +294,19 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
               {/* Connection info */}
               <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">🔗 连接</div>
-                <Field label="类型" value={selectedEnv.type === 'local' ? 'Local' : 'SSH'} />
-                {selectedEnv.host && <Field label="地址" value={selectedEnv.host} />}
-                {selectedEnv.port && <Field label="端口" value={String(selectedEnv.port)} />}
-                {selectedEnv.username && <Field label="用户" value={selectedEnv.username} />}
+                <Field label="类型" value={selectedEnv.type === 'local' ? 'Local' : selectedEnv.type === 'wsl' ? 'WSL' : 'SSH'} />
+                {selectedEnv.type === 'wsl' ? (
+                  <>
+                    {selectedEnv.wsl_distro && <Field label="发行版" value={selectedEnv.wsl_distro} />}
+                    {selectedEnv.wsl_user && <Field label="用户" value={selectedEnv.wsl_user} />}
+                  </>
+                ) : (
+                  <>
+                    {selectedEnv.host && <Field label="地址" value={selectedEnv.host} />}
+                    {selectedEnv.port && <Field label="端口" value={String(selectedEnv.port)} />}
+                    {selectedEnv.username && <Field label="用户" value={selectedEnv.username} />}
+                  </>
+                )}
               </div>
 
               {/* System info */}
@@ -319,7 +383,33 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       {showAddEnv && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-[#0f1117] rounded-lg p-5 w-[420px] border border-[#1e2130]">
-            <h3 className="text-lg font-semibold mb-4">添加 SSH 环境</h3>
+            <h3 className="text-lg font-semibold mb-4">添加新环境</h3>
+
+            {/* Environment Type Selection */}
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => setAddEnvType('ssh')}
+                className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
+                  addEnvType === 'ssh'
+                    ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                    : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
+                }`}
+              >
+                ☁️ SSH
+              </button>
+              {wslInstalled && (
+                <button
+                  onClick={() => setAddEnvType('wsl')}
+                  className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
+                    addEnvType === 'wsl'
+                      ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                      : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
+                  }`}
+                >
+                  🐧 WSL
+                </button>
+              )}
+            </div>
 
             <div className="space-y-3">
               <div>
@@ -328,88 +418,135 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   type="text"
                   value={addEnvForm.name}
                   onChange={e => setAddEnvForm({ ...addEnvForm, name: e.target.value })}
-                  placeholder="例如：生产服务器"
+                  placeholder={addEnvType === 'wsl' ? '例如：Ubuntu 开发环境' : '例如：生产服务器'}
                   className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                  <label className="block text-xs text-[#8b8fa7] mb-1">主机地址 *</label>
-                  <input
-                    type="text"
-                    value={addEnvForm.host}
-                    onChange={e => setAddEnvForm({ ...addEnvForm, host: e.target.value })}
-                    placeholder="192.168.1.100"
-                    className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-[#8b8fa7] mb-1">端口</label>
-                  <input
-                    type="text"
-                    value={addEnvForm.port}
-                    onChange={e => setAddEnvForm({ ...addEnvForm, port: e.target.value })}
-                    placeholder="22"
-                    className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
-                  />
-                </div>
-              </div>
+              {addEnvType === 'ssh' ? (
+                <>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-xs text-[#8b8fa7] mb-1">主机地址 *</label>
+                      <input
+                        type="text"
+                        value={addEnvForm.host}
+                        onChange={e => setAddEnvForm({ ...addEnvForm, host: e.target.value })}
+                        placeholder="192.168.1.100"
+                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-[#8b8fa7] mb-1">端口</label>
+                      <input
+                        type="text"
+                        value={addEnvForm.port}
+                        onChange={e => setAddEnvForm({ ...addEnvForm, port: e.target.value })}
+                        placeholder="22"
+                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                      />
+                    </div>
+                  </div>
 
-              <div>
-                <label className="block text-xs text-[#8b8fa7] mb-1">用户名</label>
-                <input
-                  type="text"
-                  value={addEnvForm.username}
-                  onChange={e => setAddEnvForm({ ...addEnvForm, username: e.target.value })}
-                  placeholder="root"
-                  className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
-                />
-              </div>
+                  <div>
+                    <label className="block text-xs text-[#8b8fa7] mb-1">用户名</label>
+                    <input
+                      type="text"
+                      value={addEnvForm.username}
+                      onChange={e => setAddEnvForm({ ...addEnvForm, username: e.target.value })}
+                      placeholder="root"
+                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                    />
+                  </div>
 
-              <div>
-                <label className="block text-xs text-[#8b8fa7] mb-1">认证方式</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setAddEnvForm({ ...addEnvForm, auth_type: 'key' })}
-                    className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
-                      addEnvForm.auth_type === 'key'
-                        ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
-                        : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
-                    }`}
-                  >
-                    密钥
-                  </button>
-                  <button
-                    onClick={() => setAddEnvForm({ ...addEnvForm, auth_type: 'password' })}
-                    className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
-                      addEnvForm.auth_type === 'password'
-                        ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
-                        : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
-                    }`}
-                  >
-                    密码
-                  </button>
-                </div>
-              </div>
+                  <div>
+                    <label className="block text-xs text-[#8b8fa7] mb-1">认证方式</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setAddEnvForm({ ...addEnvForm, auth_type: 'key' })}
+                        className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
+                          addEnvForm.auth_type === 'key'
+                            ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                            : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
+                        }`}
+                      >
+                        密钥
+                      </button>
+                      <button
+                        onClick={() => setAddEnvForm({ ...addEnvForm, auth_type: 'password' })}
+                        className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
+                          addEnvForm.auth_type === 'password'
+                            ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                            : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
+                        }`}
+                      >
+                        密码
+                      </button>
+                    </div>
+                  </div>
 
-              {addEnvForm.auth_type === 'key' && (
-                <div>
-                  <label className="block text-xs text-[#8b8fa7] mb-1">私钥路径</label>
-                  <input
-                    type="text"
-                    value={addEnvForm.private_key_path}
-                    onChange={e => setAddEnvForm({ ...addEnvForm, private_key_path: e.target.value })}
-                    placeholder="~/.ssh/id_rsa"
-                    className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
-                  />
-                </div>
+                  {addEnvForm.auth_type === 'key' && (
+                    <div>
+                      <label className="block text-xs text-[#8b8fa7] mb-1">私钥路径</label>
+                      <input
+                        type="text"
+                        value={addEnvForm.private_key_path}
+                        onChange={e => setAddEnvForm({ ...addEnvForm, private_key_path: e.target.value })}
+                        placeholder="~/.ssh/id_rsa"
+                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* WSL Form */}
+                  <div>
+                    <label className="block text-xs text-[#8b8fa7] mb-1">WSL 发行版 *</label>
+                    <select
+                      value={addEnvForm.wsl_distro}
+                      onChange={e => setAddEnvForm({ ...addEnvForm, wsl_distro: e.target.value })}
+                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                    >
+                      <option value="">选择发行版...</option>
+                      {wslDistros.map(d => (
+                        <option key={d.name} value={d.name}>
+                          {d.name} {d.is_default ? '(默认)' : ''} - {d.state}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-[#8b8fa7] mb-1">默认用户 (可选)</label>
+                    <input
+                      type="text"
+                      value={addEnvForm.wsl_user}
+                      onChange={e => setAddEnvForm({ ...addEnvForm, wsl_user: e.target.value })}
+                      placeholder="留空使用默认用户"
+                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                    />
+                  </div>
+                </>
               )}
             </div>
 
             <div className="flex gap-3 mt-5">
               <button
-                onClick={() => setShowAddEnv(false)}
+                onClick={() => {
+                  setShowAddEnv(false)
+                  setAddEnvType('ssh')
+                  setAddEnvForm({
+                    name: '',
+                    host: '',
+                    port: '22',
+                    username: '',
+                    auth_type: 'key',
+                    private_key_path: '',
+                    wsl_distro: '',
+                    wsl_user: '',
+                  })
+                }}
                 className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130] transition-colors"
               >
                 取消

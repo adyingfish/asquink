@@ -9,7 +9,7 @@ pub struct Database {
 pub struct EnvConfig {
     pub id: String,
     pub name: String,
-    pub env_type: String, // "local" | "ssh"
+    pub env_type: String, // "local" | "ssh" | "wsl"
     pub host: Option<String>,
     pub port: Option<u16>,
     pub username: Option<String>,
@@ -17,6 +17,9 @@ pub struct EnvConfig {
     pub private_key_path: Option<String>,
     pub passphrase: Option<String>,
     pub icon: Option<String>,
+    // WSL-specific
+    pub wsl_distro: Option<String>,
+    pub wsl_user: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +76,8 @@ impl Database {
                 icon TEXT,
                 status TEXT DEFAULT 'offline',
                 detail TEXT,
+                wsl_distro TEXT,
+                wsl_user TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_connected DATETIME
             )
@@ -83,6 +88,9 @@ impl Database {
 
         // Migrate from servers table to envs table if servers exists
         self.migrate_servers_to_envs().await?;
+
+        // Migrate envs table to add WSL columns
+        self.migrate_envs_table().await?;
 
         // Ensure default local environment exists
         self.ensure_local_env().await?;
@@ -222,6 +230,31 @@ impl Database {
         sqlx::query("DROP TABLE servers")
             .execute(&self.pool)
             .await?;
+
+        Ok(())
+    }
+
+    async fn migrate_envs_table(&self) -> Result<(), sqlx::Error> {
+        // Get current table info
+        let columns: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM pragma_table_info('envs')"
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let column_names: Vec<&str> = columns.iter().map(|(name,)| name.as_str()).collect();
+
+        // Add WSL-specific columns if they don't exist
+        if !column_names.contains(&"wsl_distro") {
+            sqlx::query("ALTER TABLE envs ADD COLUMN wsl_distro TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !column_names.contains(&"wsl_user") {
+            sqlx::query("ALTER TABLE envs ADD COLUMN wsl_user TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
 
         Ok(())
     }
@@ -398,7 +431,7 @@ impl Database {
 
     pub async fn list_envs(&self) -> Result<Vec<crate::Env>, sqlx::Error> {
         let envs = sqlx::query_as::<_, crate::Env>(
-            "SELECT id, name, type, host, port, username, auth_type, icon, status, detail FROM envs ORDER BY created_at DESC"
+            "SELECT id, name, type, host, port, username, auth_type, icon, status, detail, wsl_distro, wsl_user FROM envs ORDER BY created_at DESC"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -407,7 +440,7 @@ impl Database {
 
     pub async fn get_env(&self, id: &str) -> Result<EnvConfig, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon FROM envs WHERE id = ?1"
+            "SELECT id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon, wsl_distro, wsl_user FROM envs WHERE id = ?1"
         )
         .bind(id)
         .fetch_one(&self.pool)
@@ -425,14 +458,16 @@ impl Database {
             private_key_path: row.try_get("private_key_path")?,
             passphrase: row.try_get("passphrase")?,
             icon: row.try_get("icon")?,
+            wsl_distro: row.try_get("wsl_distro")?,
+            wsl_user: row.try_get("wsl_user")?,
         })
     }
 
     pub async fn create_env(&self, id: &str, req: &crate::CreateEnvRequest) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO envs (id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon, status)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'offline')
+            INSERT INTO envs (id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon, wsl_distro, wsl_user, status)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'offline')
             "#,
         )
         .bind(id)
@@ -445,6 +480,8 @@ impl Database {
         .bind(&req.private_key_path)
         .bind(&req.passphrase)
         .bind(&req.icon)
+        .bind(&req.wsl_distro)
+        .bind(&req.wsl_user)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -498,6 +535,8 @@ impl Database {
             private_key_path: req.private_key_path.clone(),
             passphrase: req.passphrase.clone(),
             icon: Some("cloud".to_string()),
+            wsl_distro: None,
+            wsl_user: None,
         };
         self.create_env(id, &env_req).await
     }
@@ -674,6 +713,8 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for crate::Env {
             icon: row.try_get("icon")?,
             status: row.try_get("status")?,
             detail: row.try_get("detail")?,
+            wsl_distro: row.try_get("wsl_distro")?,
+            wsl_user: row.try_get("wsl_user")?,
         })
     }
 }
