@@ -19,6 +19,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const fitAddonRef = useRef<FitAddon | null>(null)
   const unlistenRef = useRef<(() => void) | null>(null)
   const disposableRef = useRef<{ dispose: () => void } | null>(null)
+  const listenerSetupRef = useRef<{ cancelled: boolean }>({ cancelled: false })
 
   // Refs to track latest values for clipboard handlers
   const sessionsRef = useRef(sessions)
@@ -183,6 +184,10 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     if (!activeSession) return
 
     const terminal = terminalRef.current
+    const currentSessionId = activeSessionId
+
+    // Mark this effect as the current one
+    listenerSetupRef.current.cancelled = false
 
     // Refit terminal now that container is visible
     fitAddonRef.current?.fit()
@@ -208,12 +213,19 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     // Setup event listener for terminal data
     const setupListener = async () => {
+      // Check if this effect is still valid (not cancelled by session switch)
+      if (listenerSetupRef.current.cancelled) return
+
       // Clean up previous listener
       if (unlistenRef.current) {
         unlistenRef.current()
+        unlistenRef.current = null
       }
 
-      const unlisten = await listen(`terminal-data-${activeSessionId}`, (event: Event<unknown>) => {
+      const unlisten = await listen(`terminal-data-${currentSessionId}`, (event: Event<unknown>) => {
+        // Ignore events for other sessions
+        if (activeSessionIdRef.current !== currentSessionId) return
+
         if (event.payload instanceof Array) {
           const data = new Uint8Array(event.payload as number[])
           const decoder = new TextDecoder()
@@ -226,6 +238,12 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
           })
         }
       })
+
+      // Check again after async operation
+      if (listenerSetupRef.current.cancelled) {
+        unlisten()
+        return
+      }
 
       unlistenRef.current = unlisten
     }
@@ -242,10 +260,13 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         return
       }
 
-      const session = sessions.find(s => s.id === activeSessionId)
+      // Check if this session is still active
+      if (activeSessionIdRef.current !== currentSessionId) return
+
+      const session = sessionsRef.current.find(s => s.id === currentSessionId)
       if (session?.status === 'connected') {
         invoke('write_to_session', {
-          sessionId: activeSessionId,
+          sessionId: currentSessionId,
           sessionType: session.type,
           data,
         }).catch(console.error)
@@ -253,6 +274,9 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     })
 
     return () => {
+      // Mark this effect as cancelled
+      listenerSetupRef.current.cancelled = true
+
       if (disposableRef.current) {
         disposableRef.current.dispose()
         disposableRef.current = null
@@ -262,7 +286,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         unlistenRef.current = null
       }
     }
-  }, [activeSessionId, sessions])
+  }, [activeSessionId])
 
   const activeSession = sessions.find(s => s.id === activeSessionId)
 
