@@ -72,6 +72,7 @@ impl Database {
                 passphrase TEXT,
                 icon TEXT,
                 status TEXT DEFAULT 'offline',
+                detail TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_connected DATETIME
             )
@@ -231,17 +232,94 @@ impl Database {
             .await?;
 
         if local_exists == 0 {
+            // Detect system info for local environment
+            let system_info = Self::detect_system_info();
+
             sqlx::query(
                 r#"
-                INSERT INTO envs (id, name, type, icon, status)
-                VALUES ('local', 'Local Terminal', 'local', 'terminal', 'online')
+                INSERT INTO envs (id, name, type, detail, icon, status)
+                VALUES ('local', 'Local Terminal', 'local', ?1, 'terminal', 'online')
                 "#,
             )
+            .bind(&system_info)
             .execute(&self.pool)
             .await?;
         }
 
         Ok(())
+    }
+
+    fn detect_system_info() -> String {
+        let os = std::env::consts::OS;
+        match os {
+            "windows" => {
+                // Try PowerShell first
+                if let Ok(output) = std::process::Command::new("powershell")
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        "(Get-CimInstance Win32_OperatingSystem).Caption",
+                    ])
+                    .output()
+                {
+                    let caption = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !caption.is_empty() {
+                        if let Some(stripped) = caption.strip_prefix("Microsoft ") {
+                            let parts: Vec<&str> = stripped.split_whitespace().collect();
+                            if parts.len() >= 2 {
+                                return format!("{} {}", parts[0], parts[1]);
+                            }
+                            return stripped.to_string();
+                        }
+                        return caption;
+                    }
+                }
+
+                // Fallback to registry via cmd
+                if let Ok(output) = std::process::Command::new("cmd")
+                    .args(["/C", "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v ProductName"])
+                    .output()
+                {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    for line in stdout.lines() {
+                        if line.contains("ProductName") {
+                            if let Some(pos) = line.find("REG_SZ") {
+                                let name = line[pos + 6..].trim();
+                                let parts: Vec<&str> = name.split_whitespace().collect();
+                                if parts.len() >= 2 {
+                                    return format!("{} {}", parts[0], parts[1]);
+                                }
+                                return name.to_string();
+                            }
+                        }
+                    }
+                }
+
+                "Windows".to_string()
+            }
+            "macos" => {
+                if let Ok(output) = std::process::Command::new("sw_vers")
+                    .arg("-productVersion")
+                    .output()
+                {
+                    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    format!("macOS {}", version)
+                } else {
+                    "macOS".to_string()
+                }
+            }
+            "linux" => {
+                if let Ok(contents) = std::fs::read_to_string("/etc/os-release") {
+                    for line in contents.lines() {
+                        if line.starts_with("PRETTY_NAME=") {
+                            return line.replace("PRETTY_NAME=", "").trim_matches('"').to_string();
+                        }
+                    }
+                }
+                "Linux".to_string()
+            }
+            _ => os.to_string(),
+        }
     }
 
     async fn migrate_sessions_table(&self) -> Result<(), sqlx::Error> {
@@ -300,7 +378,7 @@ impl Database {
 
     pub async fn list_envs(&self) -> Result<Vec<crate::Env>, sqlx::Error> {
         let envs = sqlx::query_as::<_, crate::Env>(
-            "SELECT id, name, type, host, port, username, auth_type, icon, status FROM envs ORDER BY created_at DESC"
+            "SELECT id, name, type, host, port, username, auth_type, icon, status, detail FROM envs ORDER BY created_at DESC"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -575,6 +653,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for crate::Env {
             auth_type: row.try_get("auth_type")?,
             icon: row.try_get("icon")?,
             status: row.try_get("status")?,
+            detail: row.try_get("detail")?,
         })
     }
 }

@@ -36,6 +36,7 @@ pub struct Env {
     auth_type: Option<String>,
     icon: Option<String>,
     status: String,
+    detail: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

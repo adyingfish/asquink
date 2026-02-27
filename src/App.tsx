@@ -45,6 +45,7 @@ export interface Env {
   auth_type?: string
   icon?: string
   status: 'online' | 'offline'
+  detail?: string
 }
 
 export interface Project {

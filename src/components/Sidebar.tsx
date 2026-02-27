@@ -81,7 +81,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
   }
 
   const getEnvDetail = (env: Env) => {
-    if (env.type === 'local') return 'Local Machine'
+    if (env.type === 'local') return env.detail || 'Local Machine'
     if (env.host && env.username) return `${env.username}@${env.host}`
     if (env.host) return env.host
     return env.name
@@ -406,7 +406,6 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
                       <span className="text-[9px] px-1 rounded bg-[#232738]">
                         {env?.type === 'local' ? '💻' : '☁️'} {env?.name}
                       </span>
-                      {project.lang && <span>{project.lang}</span>}
                     </div>
                   </div>
                 </button>
@@ -587,7 +586,7 @@ function EnvSessionGroup({
   }
 
   const getEnvDetail = () => {
-    if (env.type === 'local') return 'Local Machine'
+    if (env.type === 'local') return env.detail || 'Local Machine'
     if (env.host && env.username) return `${env.username}@${env.host}`
     if (env.host) return env.host
     return env.name
@@ -952,7 +951,6 @@ function AddProjectModal({
   const [name, setName] = useState('')
   const [path, setPath] = useState('')
   const [envId, setEnvId] = useState('')
-  const [lang, setLang] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -978,7 +976,6 @@ function AddProjectModal({
           name,
           path,
           env_id: envId,
-          lang: lang || null,
         }
       })
       onCreated()
@@ -1033,25 +1030,6 @@ function AddProjectModal({
                   {env.type === 'local' ? '💻' : '☁️'} {env.name}
                 </option>
               ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-xs text-[#8b8fa7] mb-1">Language</label>
-            <select
-              value={lang}
-              onChange={(e) => setLang(e.target.value)}
-              className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white text-sm"
-            >
-              <option value="">Auto Detect</option>
-              <option value="TS">TypeScript</option>
-              <option value="JS">JavaScript</option>
-              <option value="Py">Python</option>
-              <option value="Rust">Rust</option>
-              <option value="Go">Go</option>
-              <option value="Java">Java</option>
-              <option value="TF">Terraform</option>
-              <option value="MD">Markdown</option>
             </select>
           </div>
         </div>
@@ -1167,9 +1145,6 @@ function AgentSelectModal({
                       <Folder size={14} className="text-[#E8915A]" />
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-medium text-[#e2e4ed] truncate font-mono">{project.path}</div>
-                        {project.lang && (
-                          <div className="text-[10px] text-[#555872]">{project.lang}</div>
-                        )}
                       </div>
                     </button>
                   ))}
