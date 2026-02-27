@@ -353,11 +353,12 @@ async fn create_local_session(
     shell: Option<String>,
     cols: u16,
     rows: u16,
+    working_dir: Option<String>,
     session_info: Option<CreateSessionInfo>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
-    state.pty_manager.create_session(&session_id, shell, cols, rows, app_handle).await.map_err(|e| e.to_string())?;
+    state.pty_manager.create_session(&session_id, shell, cols, rows, working_dir, app_handle).await.map_err(|e| e.to_string())?;
 
     // Save session to database if info provided
     if let Some(info) = session_info {

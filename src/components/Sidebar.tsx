@@ -111,6 +111,7 @@ export default function Sidebar({ onAddSession, onSessionStatusChange, onSelectS
         shell: null,
         cols: 80,
         rows: 24,
+        workingDir: projectPath,
         sessionInfo: {
           name: env.name,
           envId: env.id,

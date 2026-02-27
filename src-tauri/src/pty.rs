@@ -35,6 +35,7 @@ impl PtyManager {
         shell: Option<String>,
         cols: u16,
         rows: u16,
+        working_dir: Option<String>,
         app_handle: tauri::AppHandle,
     ) -> Result<()> {
         let pty_system = native_pty_system();
@@ -45,15 +46,22 @@ impl PtyManager {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        
+
         let shell_cmd = shell.unwrap_or_else(|| detect_default_shell());
         let mut cmd = CommandBuilder::new(&shell_cmd);
-        cmd.cwd(std::env::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/")));
-        
+
+        // Set working directory if specified, otherwise use home directory
+        let cwd = if let Some(ref dir) = working_dir {
+            std::path::PathBuf::from(dir)
+        } else {
+            std::env::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/"))
+        };
+        cmd.cwd(cwd);
+
         let child = pair.slave.spawn_command(cmd)?;
-        
+
         let session = PtySession::new(id.to_string(), pair.master, child, app_handle)?;
-        
+
         self.sessions.lock().await.insert(id.to_string(), Box::new(session));
         Ok(())
     }

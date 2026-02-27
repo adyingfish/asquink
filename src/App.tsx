@@ -160,6 +160,7 @@ function App() {
           shell: null,
           cols: 80,
           rows: 24,
+          workingDir: oldSession.projectPath,
           sessionInfo: null // Don't create new DB record
         })
       } else {
