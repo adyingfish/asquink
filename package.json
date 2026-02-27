@@ -1,6 +1,6 @@
 {
   "name": "agenthub",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "description": "AI Agent Terminal Hub - Unified management for Claude Code, Codex, and more",
   "type": "module",
   "scripts": {
