@@ -205,6 +205,9 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     // Mark container as visible and fit
     isContainerVisibleRef.current = true
 
+    // Reset terminal completely for new session
+    terminal.reset()
+
     // Use setTimeout to ensure DOM is updated before fitting
     setTimeout(() => {
       // Check if this is still the active session
@@ -224,9 +227,6 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         }).catch(console.error)
       }
     }, 50)
-
-    // Clear terminal
-    terminal.clear()
 
     // Setup event listener for terminal data
     const setupListener = async () => {
@@ -299,7 +299,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         unlistenRef.current = null
       }
     }
-  }, [activeSessionId])
+  }, [activeSessionId, sessions])
 
   const activeSession = sessions.find(s => s.id === activeSessionId)
 
