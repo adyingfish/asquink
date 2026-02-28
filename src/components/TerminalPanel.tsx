@@ -126,9 +126,53 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
         domEvent.stopPropagation()
         return
       }
+
+      // Ctrl+V: Paste from clipboard
+      if (domEvent.ctrlKey && domEvent.key === 'v') {
+        domEvent.preventDefault()
+        domEvent.stopPropagation()
+
+        const currentSessionId = activeSessionIdRef.current
+        const activeSession = sessionsRef.current.find(s => s.id === currentSessionId)
+
+        readText().then(text => {
+          if (text && activeSession?.status === 'connected' && currentSessionId) {
+            invoke('write_to_session', {
+              sessionId: currentSessionId,
+              sessionType: activeSession.type,
+              data: text,
+            }).catch(console.error)
+          }
+        }).catch(err => {
+          console.error('Paste failed:', err)
+        })
+        return
+      }
+
+      // Ctrl+Shift+V: Paste from clipboard (alternative)
+      if (domEvent.ctrlKey && domEvent.shiftKey && domEvent.key === 'V') {
+        domEvent.preventDefault()
+        domEvent.stopPropagation()
+
+        const currentSessionId = activeSessionIdRef.current
+        const activeSession = sessionsRef.current.find(s => s.id === currentSessionId)
+
+        readText().then(text => {
+          if (text && activeSession?.status === 'connected' && currentSessionId) {
+            invoke('write_to_session', {
+              sessionId: currentSessionId,
+              sessionType: activeSession.type,
+              data: text,
+            }).catch(console.error)
+          }
+        }).catch(err => {
+          console.error('Paste failed:', err)
+        })
+        return
+      }
     })
 
-    // Handle paste event
+    // Handle paste event from context menu or other sources
     const handlePaste = (e: ClipboardEvent) => {
       e.preventDefault()
       e.stopPropagation()
@@ -136,7 +180,15 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       const currentSessionId = activeSessionIdRef.current
       const activeSession = sessionsRef.current.find(s => s.id === currentSessionId)
 
-      readText().then(text => {
+      // Try to get text from clipboard event first, fall back to readText
+      let textPromise: Promise<string>
+      if (e.clipboardData) {
+        textPromise = Promise.resolve(e.clipboardData.getData('text'))
+      } else {
+        textPromise = readText()
+      }
+
+      textPromise.then(text => {
         if (text && activeSession?.status === 'connected' && currentSessionId) {
           invoke('write_to_session', {
             sessionId: currentSessionId,
