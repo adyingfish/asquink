@@ -25,6 +25,14 @@ const AGENTS = [
   { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#EF4444', needsProject: false },
 ]
 
+const getProjectNameFromPath = (value: string) => {
+  const normalized = value.trim().replace(/[\\/]+$/, '')
+  if (!normalized) return ''
+
+  const segments = normalized.split(/[\\/]/).filter(Boolean)
+  return segments[segments.length - 1] || normalized
+}
+
 export default function Sidebar({
   onAddSession,
   onSessionStatusChange,
@@ -1098,6 +1106,7 @@ function NewSessionModal({
   const [browsing, setBrowsing] = useState(false)
   const [browseEnv, setBrowseEnv] = useState<Env | null>(null)
   const [browseDir, setBrowseDir] = useState('')
+  const [browseProjectName, setBrowseProjectName] = useState('')
   const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
   const [scanningAgents, setScanningAgents] = useState(false)
 
@@ -1129,6 +1138,7 @@ function NewSessionModal({
     setBrowsing(false)
     setBrowseEnv(null)
     setBrowseDir('')
+    setBrowseProjectName('')
     setDetectedAgents(null)
   }
 
@@ -1137,6 +1147,7 @@ function NewSessionModal({
       setBrowsing(false)
       setBrowseEnv(null)
       setBrowseDir('')
+      setBrowseProjectName('')
       return
     }
     if (step === 'agent' && intent === 'project') {
@@ -1176,20 +1187,38 @@ function NewSessionModal({
   }
 
   const handleBrowseConfirm = async () => {
-    if (!browseEnv || !browseDir.trim()) return
-    const name = browseDir.trim().split('/').pop() || browseDir.trim()
+    const path = browseDir.trim()
+    const name = browseProjectName.trim()
+
+    if (!browseEnv || !path || !name) return
+
     // Create project in database
     try {
-      await invoke('create_project', {
-        req: { name, path: browseDir.trim(), env_id: browseEnv.id }
+      const projectId = await invoke<string>('create_project', {
+        req: { name, path, env_id: browseEnv.id }
       })
+
+      setSelectedProject({ id: projectId, name, path, env_id: browseEnv.id } as Project)
+      setSelectedEnv(browseEnv)
+      setBrowsing(false)
+      setBrowseDir('')
+      setBrowseProjectName('')
+      setStep('agent')
     } catch (err) {
       console.error('Failed to create project:', err)
+      return
     }
-    setSelectedProject({ id: name, name, path: browseDir.trim(), env_id: browseEnv.id } as Project)
-    setSelectedEnv(browseEnv)
-    setBrowsing(false)
-    setStep('agent')
+  }
+
+  const handleBrowseDirChange = (value: string) => {
+    const previousSuggestedName = getProjectNameFromPath(browseDir)
+    const nextSuggestedName = getProjectNameFromPath(value)
+
+    setBrowseDir(value)
+
+    if (!browseProjectName || browseProjectName === previousSuggestedName) {
+      setBrowseProjectName(nextSuggestedName)
+    }
   }
 
   const handleLaunch = () => {
@@ -1386,17 +1415,24 @@ function NewSessionModal({
                 <div className="text-[11px] text-[#4e5270] mb-2">输入工作目录的绝对路径</div>
                 <input
                   value={browseDir}
-                  onChange={(e) => setBrowseDir(e.target.value)}
+                  onChange={(e) => handleBrowseDirChange(e.target.value)}
                   placeholder="~/my-project  或  /home/user/project"
                   className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] font-mono text-[13px] outline-none focus:border-[#E8915A]"
                   autoFocus
+                />
+                <div className="text-[11px] text-[#4e5270] mb-2 mt-3">Project name</div>
+                <input
+                  value={browseProjectName}
+                  onChange={(e) => setBrowseProjectName(e.target.value)}
+                  placeholder="my-project"
+                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] text-[13px] outline-none focus:border-[#E8915A]"
                 />
                 {browseDir.trim() && (
                   <div className="mt-3 px-4 py-3 rounded-lg bg-[#151820] border border-[#1d2030]">
                     <div className="text-[11px] text-[#4e5270] mb-2">将创建为项目</div>
                     <div className="flex items-center gap-2">
                       <span>📁</span>
-                      <span className="text-[13px] font-mono font-medium">{browseDir.trim().split('/').pop() || browseDir.trim()}</span>
+                      <span className="text-[13px] font-mono font-medium">{browseProjectName.trim() || getProjectNameFromPath(browseDir)}</span>
                       <span className="text-[11px] text-[#4e5270]">on {browseEnv.type === 'local' ? '💻' : '☁️'} {browseEnv.name}</span>
                     </div>
                   </div>
@@ -1498,7 +1534,7 @@ function NewSessionModal({
             {getSummary()}
           </div>
 
-          {browsing && browseEnv && browseDir.trim() ? (
+          {browsing && browseEnv && browseDir.trim() && browseProjectName.trim() ? (
             <button
               onClick={handleBrowseConfirm}
               className="px-5 py-2 rounded-lg bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white text-[12px] font-semibold shadow-lg"
