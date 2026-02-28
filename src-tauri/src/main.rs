@@ -463,29 +463,29 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
 async fn launch_agent(
     state: State<'_, Arc<Mutex<AppState>>>,
     session_id: String,
+    session_type: String,
     agent: String,
-    working_dir: Option<String>,
 ) -> Result<(), String> {
     let state = state.lock().await;
 
-    let api_key = state.db.get_setting("anthropic_api_key").await
-        .map_err(|e| e.to_string())?
-        .ok_or("API key not configured. Please set it in Settings.")?;
+    // Just send the agent command with newline
+    let cmd = format!("{}\n", agent);
 
-    // Prepare launch command with environment variables
-    let mut cmd = format!("export ANTHROPIC_API_KEY='{}'; ", api_key);
-
-    // Change to working directory if specified
-    if let Some(dir) = working_dir {
-        cmd.push_str(&format!("cd {}; ", dir));
+    // Write to session based on type
+    if session_type == "local" {
+        state.pty_manager.write(&session_id, cmd.as_bytes()).await.map_err(|e| e.to_string())
+    } else if session_type == "ssh" {
+        let sessions = state.ssh_sessions.lock().await;
+        if let Some(session) = sessions.get(&session_id) {
+            session.write(cmd.as_bytes()).await.map_err(|e| e.to_string())
+        } else {
+            Err("SSH session not found".to_string())
+        }
+    } else if session_type == "wsl" {
+        state.wsl_manager.write(&session_id, cmd.as_bytes()).await.map_err(|e| e.to_string())
+    } else {
+        Err("Unknown session type".to_string())
     }
-
-    // Launch agent
-    cmd.push_str(&agent);
-    cmd.push_str("\n");
-
-    // Write to session
-    state.pty_manager.write(&session_id, cmd.as_bytes()).await.map_err(|e| e.to_string())
 }
 
 // Session commands

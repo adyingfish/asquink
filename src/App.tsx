@@ -5,6 +5,9 @@ import TabBar from './components/TabBar'
 import TerminalPanel from './components/TerminalPanel'
 import EnvManagePage from './components/EnvManagePage'
 
+// Agent IDs for auto-launch
+const AGENT_IDS = ['claude', 'codex', 'gemini', 'opencode', 'openclaw']
+
 export interface AgentInfo {
   id: string
   name: string
@@ -225,6 +228,21 @@ function App() {
       setSessions(prev => prev.map(s =>
         s.id === oldSession.id ? { ...s, status: 'connected' as const } : s
       ))
+
+      // Auto-launch agent if session has an agent
+      if (oldSession.agentId && AGENT_IDS.includes(oldSession.agentId)) {
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId: oldSession.id,
+              sessionType: oldSession.type,
+              agent: oldSession.agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent on reconnect:', err)
+          }
+        }, 500)
+      }
     } catch (error) {
       console.error('Failed to reconnect session:', error)
       setSessions(prev => prev.map(s =>

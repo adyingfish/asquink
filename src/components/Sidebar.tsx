@@ -152,6 +152,25 @@ export default function Sidebar({
         sessionInfo,
       })
       onSessionStatusChange?.(id, 'connected')
+
+      // Auto-launch agent if selected
+      if (agentId) {
+        const agentInfo = AGENTS.find(a => a.id === agentId)
+        if (agentInfo) {
+          // Wait a bit for terminal to be ready
+          setTimeout(async () => {
+            try {
+              await invoke('launch_agent', {
+                sessionId: id,
+                sessionType: 'local',
+                agent: agentInfo.id,
+              })
+            } catch (err) {
+              console.error('Failed to launch agent:', err)
+            }
+          }, 500)
+        }
+      }
     } catch (error) {
       console.error('Failed to create local session:', error)
       onSessionStatusChange?.(id, 'disconnected')
@@ -197,6 +216,25 @@ export default function Sidebar({
       onSessionStatusChange?.(sessionId, 'connected')
       setShowPasswordPrompt(null)
       setPassword('')
+
+      // Auto-launch agent if selected
+      if (agentId) {
+        const agentInfo = AGENTS.find(a => a.id === agentId)
+        if (agentInfo) {
+          // Wait a bit for terminal to be ready
+          setTimeout(async () => {
+            try {
+              await invoke('launch_agent', {
+                sessionId,
+                sessionType: 'ssh',
+                agent: agentInfo.id,
+              })
+            } catch (err) {
+              console.error('Failed to launch agent:', err)
+            }
+          }, 500)
+        }
+      }
     } catch (error: any) {
       console.error('Failed to create SSH session:', error)
       onSessionStatusChange?.(sessionId, 'disconnected')
@@ -240,6 +278,25 @@ export default function Sidebar({
         }
       })
       onSessionStatusChange?.(sessionId, 'connected')
+
+      // Auto-launch agent if selected
+      if (agentId) {
+        const agentInfo = AGENTS.find(a => a.id === agentId)
+        if (agentInfo) {
+          // Wait a bit for terminal to be ready
+          setTimeout(async () => {
+            try {
+              await invoke('launch_agent', {
+                sessionId,
+                sessionType: 'wsl',
+                agent: agentInfo.id,
+              })
+            } catch (err) {
+              console.error('Failed to launch agent:', err)
+            }
+          }, 500)
+        }
+      }
     } catch (error: any) {
       console.error('Failed to create WSL session:', error)
       onSessionStatusChange?.(sessionId, 'disconnected')
