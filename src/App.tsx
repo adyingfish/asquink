@@ -251,16 +251,26 @@ function App() {
     }
   }
 
+  const handleSelectSession = (id: string) => {
+    setActiveSessionId(id)
+    setShowEnvManage(false)
+  }
+
+  const handleReconnectSession = (session: Session) => {
+    reconnectSession(session)
+    setShowEnvManage(false)
+  }
+
   return (
     <div className="h-screen w-screen flex bg-dark-900 text-gray-200 overflow-hidden">
       <Sidebar
         onAddSession={addSession}
         onSessionStatusChange={updateSessionStatus}
-        onSelectSession={setActiveSessionId}
+        onSelectSession={handleSelectSession}
         activeSessionId={activeSessionId}
         sessions={sessions}
         onDeleteSession={deleteSession}
-        onReconnectSession={reconnectSession}
+        onReconnectSession={handleReconnectSession}
         isLoading={isLoading}
         onOpenEnvManage={() => setShowEnvManage(true)}
         refreshKey={refreshKey}
