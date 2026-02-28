@@ -289,8 +289,6 @@ export default function EnvManagePage() {
   const [selEnv, setSelEnv] = useState("wsl");
   const [selAgent, setSelAgent] = useState("claude");
 
-  const connectedCount = ACP_AGENTS.filter(a => a.status === "connected").length;
-
   return (
     <div style={{ fontFamily: sans, background: C.bg0, color: C.t1, height: "100vh", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
@@ -314,8 +312,8 @@ export default function EnvManagePage() {
           {/* Tabs */}
           <div style={{ display: "flex", borderBottom: `1px solid ${C.bds}`, flexShrink: 0 }}>
             {[
-              { id: "envs", label: "🖥 环境", sub: `${ENVS.length} 个` },
-              { id: "agents", label: "🤖 ACP Agent", sub: `${connectedCount}/${ACP_AGENTS.length}` },
+              { id: "envs", label: "🖥 环境" },
+              { id: "agents", label: "🤖 ACP Agent" },
             ].map(t => (
               <div key={t.id} onClick={() => setTab(t.id)} style={{
                 flex: 1, textAlign: "center", padding: "10px 0", fontSize: 12, fontWeight: 550, cursor: "pointer",
@@ -324,7 +322,6 @@ export default function EnvManagePage() {
                 background: tab === t.id ? C.bg2 : "transparent",
               }}>
                 {t.label}
-                <span style={{ marginLeft: 5, fontSize: 10, fontFamily: mono, background: C.bg3, color: C.t3, padding: "0px 5px", borderRadius: 3 }}>{t.sub}</span>
               </div>
             ))}
           </div>

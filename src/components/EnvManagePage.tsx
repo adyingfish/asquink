@@ -2,13 +2,45 @@ import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import type { Env, Project, SessionRecord, AgentInfo } from '../App'
 
-// Agent definitions with colors
+// Agent definitions with colors - for ACP Agent management
+const AGENT_REGISTRY: Record<string, { name: string; color: string; icon: string; install: string; docs: string }> = {
+  claude:   { name: "Claude Code",  color: "#E8915A", icon: "🟠", install: "npm install -g @anthropic-ai/claude-code", docs: "https://docs.anthropic.com/claude-code" },
+  codex:    { name: "Codex CLI",    color: "#4ADE80", icon: "🟢", install: "npm install -g @openai/codex",             docs: "https://github.com/openai/codex" },
+  gemini:   { name: "Gemini CLI",   color: "#60A5FA", icon: "🔵", install: "npm install -g @google/gemini-cli",        docs: "https://github.com/google/gemini-cli" },
+  opencode: { name: "OpenCode",     color: "#F472B6", icon: "🟣", install: "npm install -g opencode",                  docs: "https://github.com/opencode-ai/opencode" },
+}
+
+// Agent definitions with colors - for env agent scanning
 const AGENTS = [
   { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true },
   { id: 'codex', name: 'Codex', short: 'Codex', color: '#E5E7EB', needsProject: true },
   { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true },
   { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#78716C', needsProject: true },
   { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#EF4444', needsProject: false },
+]
+
+// ACP Agent state type
+interface AcpAgent {
+  id: string
+  status: 'connected' | 'disconnected' | 'not_installed'
+  endpoint: string
+  protocol: string
+  version: string
+  pid: number | null
+  models: string[]
+  activeModel: string | null
+  apiKey: string | null
+  keyStatus: 'valid' | 'missing' | 'invalid'
+  balance: string
+  monthUsage: string
+}
+
+// Mock ACP Agents data (will be replaced with real data from backend later)
+const MOCK_ACP_AGENTS: AcpAgent[] = [
+  { id: "claude", status: "connected", endpoint: "localhost:7862", protocol: "ACP/1.2", version: "1.0.23", pid: 48210, models: ["sonnet-4", "opus-4"], activeModel: "sonnet-4", apiKey: "sk-ant-···········4f2m", keyStatus: "valid", balance: "$152.30", monthUsage: "$34.20" },
+  { id: "codex", status: "connected", endpoint: "localhost:7863", protocol: "ACP/1.1", version: "0.9.4", pid: 48315, models: ["o3", "o4-mini"], activeModel: "o3", apiKey: "sk-proj-···········x8kn", keyStatus: "valid", balance: "$28.50", monthUsage: "$12.80" },
+  { id: "gemini", status: "disconnected", endpoint: "—", protocol: "ACP/1.2", version: "2.1.0", pid: null, models: ["gemini-2.5-pro"], activeModel: "gemini-2.5-pro", apiKey: null, keyStatus: "missing", balance: "—", monthUsage: "—" },
+  { id: "opencode", status: "not_installed", endpoint: "—", protocol: "—", version: "—", pid: null, models: [], activeModel: null, apiKey: null, keyStatus: "missing", balance: "—", monthUsage: "—" },
 ]
 
 // WSL Distro interface
@@ -22,6 +54,146 @@ interface WslDistro {
 interface EnvManagePageProps {
   onBack: () => void
   onEnvChange?: () => void
+}
+
+// Badge component for status display
+const Badge = ({ status }: { status: string }) => {
+  const m: Record<string, { bg: string; c: string; t: string }> = {
+    connected: { bg: "#4ADE8015", c: "#4ADE80", t: "● 已连接" },
+    disconnected: { bg: "#FBBF2415", c: "#FBBF24", t: "○ 未连接" },
+    not_installed: { bg: "#4e527015", c: "#4e5270", t: "✗ 未安装" },
+    valid: { bg: "#4ADE8015", c: "#4ADE80", t: "✓ 有效" },
+    missing: { bg: "#F8717112", c: "#F87171", t: "✗ 未配置" },
+    invalid: { bg: "#F8717112", c: "#F87171", t: "✗ 无效" },
+  }
+  const s = m[status] || m.disconnected
+  return <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: s.bg, color: s.c, fontWeight: 500, whiteSpace: "nowrap" }}>{s.t}</span>
+}
+
+// ACP Agent Detail component
+function AgentDetail({ agent }: { agent: AcpAgent }) {
+  const reg = AGENT_REGISTRY[agent.id]
+  const isInstalled = agent.status !== "not_installed"
+  const isConnected = agent.status === "connected"
+  const [copied, setCopied] = useState(false)
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-7">
+      {/* Header */}
+      <div className="flex items-center gap-3.5 mb-6">
+        <div
+          className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+          style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}40` }}
+        >
+          {reg.icon}
+        </div>
+        <div className="flex-1">
+          <div className="text-lg font-semibold flex items-center gap-2.5">
+            {reg.name}
+            <Badge status={agent.status} />
+          </div>
+          <div className="text-xs text-[#4e5270] mt-0.5 font-mono">
+            {isConnected && <span>{agent.endpoint} · PID {agent.pid} · v{agent.version}</span>}
+            {!isConnected && isInstalled && <span>本地已安装，未运行</span>}
+            {!isInstalled && <span>本地未安装</span>}
+          </div>
+        </div>
+        {isConnected && (
+          <button className="px-3.5 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#F87171] hover:text-[#F87171] transition-colors">
+            断开
+          </button>
+        )}
+        {!isConnected && isInstalled && (
+          <button
+            className="px-3.5 py-2 rounded-lg text-xs font-medium cursor-pointer transition-colors"
+            style={{ border: `1px solid ${reg.color}50`, background: `${reg.color}12`, color: reg.color }}
+          >
+            🔗 连接
+          </button>
+        )}
+      </div>
+
+      {/* Not installed state */}
+      {!isInstalled && (
+        <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-8 text-center">
+          <div className="text-4xl mb-3.5">📦</div>
+          <div className="text-base font-medium mb-2">{reg.name} 尚未安装</div>
+          <div className="text-xs text-[#4e5270] leading-relaxed max-w-[400px] mx-auto mb-4.5">
+            在本地终端安装后，ASquink 会通过 ACP 自动检测并连接。
+            <br />连接后即可在任意环境的会话中使用。
+          </div>
+          <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#08090d] border border-[#1d2030]">
+            <span className="font-mono text-sm text-[#8b8fa7]">$ {reg.install}</span>
+            <span
+              onClick={() => copyToClipboard(reg.install)}
+              className="text-[10px] px-2 py-1 rounded bg-[#1b1f2b] font-medium cursor-pointer transition-colors"
+              style={{ color: copied ? "#4ADE80" : "#4e5270" }}
+            >
+              {copied ? "✓ 已复制" : "📋 复制"}
+            </span>
+          </div>
+          <div className="mt-3.5">
+            <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#E8915A] no-underline hover:underline">
+              📖 查看文档 →
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Installed state */}
+      {isInstalled && (
+        <>
+          {/* ACP Connection Info */}
+          <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-2.5">
+              🔗 ACP 本地连接
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-[#1d2030]">
+              <span className="text-xs text-[#8b8fa7]">协议</span>
+              <span className="text-xs font-mono font-medium">{agent.protocol}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-[#1d2030]">
+              <span className="text-xs text-[#8b8fa7]">端点</span>
+              <span className="text-xs font-mono font-medium">{agent.endpoint}</span>
+            </div>
+            <div className="flex justify-between items-center py-2 border-b border-[#1d2030]">
+              <span className="text-xs text-[#8b8fa7]">进程</span>
+              <span className="text-xs font-mono font-medium" style={{ color: agent.pid ? "#e2e4ed" : "#4e5270" }}>
+                {agent.pid ? `PID ${agent.pid}` : "—"}
+              </span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-xs text-[#8b8fa7]">版本</span>
+              <span className="text-xs font-mono font-medium">v{agent.version}</span>
+            </div>
+            <div className="text-[10.5px] text-[#4e5270] mt-2 leading-relaxed">
+              Agent 作为本地服务运行，ASquink 通过 ACP 协议与其通信。
+              <br />在任意环境的会话中均可调用此 Agent。
+            </div>
+          </div>
+
+          {/* Danger Zone */}
+          <div className="bg-[#F87171]/5 rounded-xl border border-[#F87171]/20 p-4 mt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium">移除此 Agent</div>
+                <div className="text-[11px] text-[#4e5270] mt-0.5">断开 ACP 连接，清除配置（不卸载 CLI）</div>
+              </div>
+              <button className="px-3.5 py-1.5 rounded-lg border border-[#F87171]/40 bg-transparent text-[#F87171] text-xs cursor-pointer hover:bg-[#F87171]/10 transition-colors">
+                移除
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
 }
 
 export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProps) {
@@ -48,6 +220,11 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
   const [scanningAgents, setScanningAgents] = useState(false)
 
+  // New state for ACP Agent tab
+  const [activeTab, setActiveTab] = useState<'envs' | 'agents'>('envs')
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('claude')
+  const [acpAgents, setAcpAgents] = useState<AcpAgent[]>(MOCK_ACP_AGENTS)
+
   useEffect(() => {
     loadData()
     checkWsl()
@@ -64,7 +241,13 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       setProjects(projectList)
       setSessions(sessionList)
       if (envList.length > 0 && !selectedEnvId) {
-        setSelectedEnvId(envList[0].id)
+        // Prefer local environment if available
+        const localEnv = envList.find(e => e.type === 'local')
+        if (localEnv) {
+          setSelectedEnvId(localEnv.id)
+        } else {
+          setSelectedEnvId(envList[0].id)
+        }
       }
     } catch (error) {
       console.error('Failed to load data:', error)
@@ -88,6 +271,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const selectedEnv = envs.find(e => e.id === selectedEnvId)
   const envProjects = projects.filter(p => p.env_id === selectedEnvId)
   const envSessions = sessions.filter(s => s.env_id === selectedEnvId)
+  const selectedAcpAgent = acpAgents.find(a => a.id === selectedAgentId)
 
   const scanAgents = async () => {
     if (!selectedEnv) {
@@ -117,8 +301,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
   // Scan agents when selected environment changes
   useEffect(() => {
-    scanAgents()
-  }, [selectedEnvId])
+    if (activeTab === 'envs') {
+      scanAgents()
+    }
+  }, [selectedEnvId, activeTab])
 
   const deleteEnv = async (id: string) => {
     if (!confirm('确定删除此环境？所有关联会话也会被移除。')) return
@@ -224,66 +410,142 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
           ←
         </span>
         <div>
-          <div className="text-base font-semibold">⚙ 环境管理</div>
-          <div className="text-[11px] text-[#4e5270] mt-0.5">管理服务器和本地连接</div>
+          <div className="text-base font-semibold">⚙ 环境与 Agent 管理</div>
+          <div className="text-[11px] text-[#4e5270] mt-0.5">管理远程环境连接和本地 ACP Agent</div>
         </div>
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Env list */}
-        <div className="w-[260px] border-r border-[#1d2030] overflow-y-auto p-3">
-          {[...envs].sort((a, b) => {
-            // Local environment always first, WSL second, SSH last
-            if (a.type === 'local') return -1
-            if (b.type === 'local') return 1
-            if (a.type === 'wsl') return -1
-            if (b.type === 'wsl') return 1
-            return 0
-          }).map(env => {
-            const isSelected = selectedEnvId === env.id
-            const isLocal = env.type === 'local'
-            const isWsl = env.type === 'wsl'
-            const envIcon = isLocal ? '💻' : isWsl ? '🐧' : '☁️'
-            const envDetail = isLocal ? (env.detail || 'localhost') : isWsl ? (env.wsl_distro || 'WSL') : (env.host || '-')
-            return (
+        {/* Left panel */}
+        <div className="w-[280px] border-r border-[#1d2030] flex flex-col flex-shrink-0">
+          {/* Tabs */}
+          <div className="flex border-b border-[#1d2030] flex-shrink-0">
+            {[
+              { id: 'envs' as const, label: '🖥 环境' },
+              { id: 'agents' as const, label: '🤖 ACP Agent' },
+            ].map(t => (
               <div
-                key={env.id}
-                onClick={() => setSelectedEnvId(env.id)}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
-                  isSelected
-                    ? 'bg-[#E8915A]/12 border border-[#E8915A]/40'
-                    : 'border border-transparent hover:bg-[#222738]'
-                }`}
+                key={t.id}
+                onClick={() => setActiveTab(t.id)}
+                className="flex-1 text-center py-2.5 text-xs font-medium cursor-pointer transition-colors"
+                style={{
+                  color: activeTab === t.id ? '#e2e4ed' : '#4e5270',
+                  borderBottom: activeTab === t.id ? '2px solid #E8915A' : '2px solid transparent',
+                  background: activeTab === t.id ? '#151820' : 'transparent',
+                }}
               >
-                <span className="text-xl">{envIcon}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium">{env.name}</div>
-                  <div className="text-[10.5px] text-[#4e5270] font-mono truncate">
-                    {envDetail}
+                {t.label}
+              </div>
+            ))}
+          </div>
+
+          {/* List */}
+          <div className="flex-1 overflow-y-auto p-2.5">
+            {activeTab === 'envs' && (
+              <>
+                {[...envs].sort((a, b) => {
+                  // Local environment always first, WSL second, SSH last
+                  if (a.type === 'local') return -1
+                  if (b.type === 'local') return 1
+                  if (a.type === 'wsl') return -1
+                  if (b.type === 'wsl') return 1
+                  return 0
+                }).map(env => {
+                  const isSelected = selectedEnvId === env.id
+                  const isLocal = env.type === 'local'
+                  const isWsl = env.type === 'wsl'
+                  const envIcon = isLocal ? '💻' : isWsl ? '🐧' : '☁️'
+                  const envDetail = isLocal ? (env.detail || 'localhost') : isWsl ? (env.wsl_distro || 'WSL') : (env.host || '-')
+                  const isOnline = env.status === 'online'
+                  return (
+                    <div
+                      key={env.id}
+                      onClick={() => setSelectedEnvId(env.id)}
+                      className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
+                        isSelected
+                          ? 'bg-[#E8915A]/12 border border-[#E8915A]/40'
+                          : 'border border-transparent hover:bg-[#222738]'
+                      }`}
+                    >
+                      <span className="text-xl">{envIcon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium">{env.name}</div>
+                        <div className="text-[10.5px] text-[#4e5270] font-mono truncate">
+                          {envDetail}
+                        </div>
+                      </div>
+                      <div
+                        className={`w-[7px] h-[7px] rounded-full ${
+                          isOnline
+                            ? 'bg-[#4ADE80] shadow-sm shadow-[#4ADE80]'
+                            : 'bg-[#F87171] shadow-sm shadow-[#F87171]'
+                        }`}
+                      />
+                    </div>
+                  )
+                })}
+
+                <div
+                  onClick={() => setShowAddEnv(true)}
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg mt-2 border border-dashed border-[#282d3e] cursor-pointer text-[#4e5270] text-sm hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+                >
+                  <span className="text-base w-7 text-center">＋</span>
+                  <span>添加新环境</span>
+                </div>
+              </>
+            )}
+
+            {activeTab === 'agents' && (
+              <>
+                {acpAgents.map(agent => {
+                  const reg = AGENT_REGISTRY[agent.id]
+                  const isSelected = selectedAgentId === agent.id
+                  return (
+                    <div
+                      key={agent.id}
+                      onClick={() => setSelectedAgentId(agent.id)}
+                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors"
+                      style={{
+                        background: isSelected ? `${reg.color}15` : 'transparent',
+                        border: isSelected ? `1px solid ${reg.color}40` : '1px solid transparent',
+                      }}
+                    >
+                      <div
+                        className="w-9 h-9 rounded-md flex items-center justify-center text-base"
+                        style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}30` }}
+                      >
+                        {reg.icon}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium">{reg.name}</div>
+                        {agent.status === 'connected' && (
+                          <div className="text-[10px] text-[#4e5270] font-mono mt-0.5">{agent.endpoint}</div>
+                        )}
+                        {agent.status === 'disconnected' && (
+                          <div className="text-[10px] text-[#FBBF24] mt-0.5">已安装，未运行</div>
+                        )}
+                        {agent.status === 'not_installed' && (
+                          <div className="text-[10px] text-[#4e5270] mt-0.5">未安装</div>
+                        )}
+                      </div>
+                      <Badge status={agent.status} />
+                    </div>
+                  )
+                })}
+
+                {/* ACP info */}
+                <div className="mt-3 px-3 py-2.5 rounded-lg bg-[#151820] border border-[#1d2030]">
+                  <div className="text-[10px] text-[#4e5270] leading-relaxed">
+                    🔌 Agent 在本地运行，通过 ACP 协议与 ASquink 通信。连接后可在任意环境的会话中使用。
                   </div>
                 </div>
-                <div
-                  className={`w-[7px] h-[7px] rounded-full ${
-                    env.status === 'online'
-                      ? 'bg-[#4ADE80] shadow-sm shadow-[#4ADE80]'
-                      : 'bg-[#F87171] shadow-sm shadow-[#F87171]'
-                  }`}
-                />
-              </div>
-            )
-          })}
-
-          <div
-            onClick={() => setShowAddEnv(true)}
-            className="flex items-center gap-2 px-3 py-2.5 rounded-lg mt-2 border border-dashed border-[#282d3e] cursor-pointer text-[#4e5270] text-sm hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
-          >
-            <span className="text-base w-7 text-center">＋</span>
-            <span>添加新环境</span>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Right: Env detail */}
-        {selectedEnv && (
+        {/* Right detail panel */}
+        {activeTab === 'envs' && selectedEnv && (
           <div className="flex-1 overflow-y-auto p-5">
             <div className="flex items-center gap-3.5 mb-6">
               <div className="w-12 h-12 rounded-xl bg-[#1b1f2b] flex items-center justify-center text-3xl border border-[#282d3e]">
@@ -495,6 +757,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
               </div>
             )}
           </div>
+        )}
+
+        {activeTab === 'agents' && selectedAcpAgent && (
+          <AgentDetail agent={selectedAcpAgent} />
         )}
       </div>
 
