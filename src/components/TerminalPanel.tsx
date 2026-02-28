@@ -20,7 +20,6 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const unlistenRef = useRef<(() => void) | null>(null)
   const disposableRef = useRef<{ dispose: () => void } | null>(null)
   const listenerSetupRef = useRef<{ cancelled: boolean; sessionId: string | null }>({ cancelled: false, sessionId: null })
-  const resizeObserverRef = useRef<ResizeObserver | null>(null)
   const isContainerVisibleRef = useRef(false)
 
   // Refs to track latest values for clipboard handlers
@@ -41,6 +40,24 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       terminalRef.current.scrollToBottom()
     }
   }, [])
+
+  // Watch the entire panel for resize to ensure terminal fits correctly
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!panelRef.current) return
+
+    const observer = new ResizeObserver(() => {
+      // Small delay to ensure layout is complete
+      setTimeout(() => {
+        fitTerminal()
+      }, 10)
+    })
+
+    observer.observe(panelRef.current)
+
+    return () => observer.disconnect()
+  }, [fitTerminal])
 
   // Initialize terminal
   useEffect(() => {
@@ -75,7 +92,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     // Initial fit after a short delay to ensure container is visible
     setTimeout(() => {
-      if (containerRef.current && !containerRef.current.classList.contains('invisible')) {
+      if (containerRef.current) {
         fitAddon.fit()
         terminal.scrollToBottom()
         isContainerVisibleRef.current = true
@@ -142,42 +159,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
-    // Setup ResizeObserver to handle container size changes
-    resizeObserverRef.current = new ResizeObserver(() => {
-      if (containerRef.current && !containerRef.current.classList.contains('invisible')) {
-        isContainerVisibleRef.current = true
-        setTimeout(fitTerminal, 10)
-      }
-    })
-    resizeObserverRef.current.observe(containerRef.current)
-
-    // Handle window resize
-    const handleResize = () => {
-      fitTerminal()
-      // Notify backend of resize
-      const currentSessionId = activeSessionIdRef.current
-      if (currentSessionId) {
-        const session = sessionsRef.current.find(s => s.id === currentSessionId)
-        if (session && session.status === 'connected') {
-          const dims = fitAddonRef.current?.proposeDimensions()
-          if (dims) {
-            invoke('resize_session', {
-              sessionId: currentSessionId,
-              sessionType: session.type,
-              cols: dims.cols,
-              rows: dims.rows,
-            }).catch(console.error)
-          }
-        }
-      }
-    }
-    window.addEventListener('resize', handleResize)
-
     return () => {
-      window.removeEventListener('resize', handleResize)
-      if (resizeObserverRef.current) {
-        resizeObserverRef.current.disconnect()
-      }
       if (containerRef.current) {
         containerRef.current.removeEventListener('paste', handlePaste as EventListener)
         const textarea = containerRef.current.querySelector('textarea.xterm-helper-textarea')
@@ -187,7 +169,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       }
       terminal.dispose()
     }
-  }, [fitTerminal])
+  }, [])
 
   // Handle session change - setup data listener
   useEffect(() => {
@@ -228,6 +210,14 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       }
     }, 50)
 
+    // Extra fit after a longer delay to ensure layout is stable
+    setTimeout(() => {
+      if (activeSessionIdRef.current === currentSessionId) {
+        fitAddonRef.current?.fit()
+        terminal.scrollToBottom()
+      }
+    }, 200)
+
     // Setup event listener for terminal data
     const setupListener = async () => {
       // Check if this effect is still valid
@@ -252,6 +242,11 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
           } else if (typeof event.payload === 'string') {
             terminal.write(event.payload)
           }
+
+          // Scroll to bottom after writing data
+          setTimeout(() => {
+            terminal.scrollToBottom()
+          }, 0)
         })
 
         // Check again after async operation
@@ -304,7 +299,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const activeSession = sessions.find(s => s.id === activeSessionId)
 
   return (
-    <div className="flex-1 bg-dark-900 relative overflow-hidden flex flex-col">
+    <div ref={panelRef} className="flex-1 bg-dark-900 relative overflow-hidden flex flex-col">
       {activeSession && (
         <div className="flex items-center gap-4 px-4 py-2 bg-dark-800 border-b border-dark-600 text-xs shrink-0">
           <div className="flex items-center gap-2">
@@ -329,7 +324,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       {/* Terminal container - always in DOM so xterm can initialize on mount */}
       <div
         ref={containerRef}
-        className="flex-1 p-2"
+        className="flex-1"
         style={{ visibility: activeSession ? 'visible' : 'hidden' }}
       />
       {!activeSession && (
