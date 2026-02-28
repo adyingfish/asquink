@@ -139,16 +139,6 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     }
     containerRef.current.addEventListener('paste', handlePaste as EventListener)
 
-    // Write welcome message
-    terminal.writeln('\x1b[1;34m╔══════════════════════════════════════╗\x1b[0m')
-    terminal.writeln('\x1b[1;34m║       Welcome to AgentHub            ║\x1b[0m')
-    terminal.writeln('\x1b[1;34m╚══════════════════════════════════════╝\x1b[0m')
-    terminal.writeln('')
-    terminal.writeln('\x1b[90m1. Configure your API key in Settings\x1b[0m')
-    terminal.writeln('\x1b[90m2. Connect to a server or open local terminal\x1b[0m')
-    terminal.writeln('\x1b[90m3. Launch Claude Code from the Agents tab\x1b[0m')
-    terminal.writeln('')
-
     terminalRef.current = terminal
     fitAddonRef.current = fitAddon
 
@@ -235,11 +225,8 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       }
     }, 50)
 
-    // Clear and show session info
+    // Clear terminal
     terminal.clear()
-    terminal.writeln(`\x1b[1;32mSession: ${activeSession.name}\x1b[0m`)
-    terminal.writeln(`\x1b[90mStatus: ${activeSession.status}\x1b[0m`)
-    terminal.writeln('')
 
     // Setup event listener for terminal data
     const setupListener = async () => {
