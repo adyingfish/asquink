@@ -488,8 +488,9 @@ async fn launch_agent(
 ) -> Result<(), String> {
     let state = state.lock().await;
 
-    // Just send the agent command with newline
-    let cmd = format!("{}\n", agent);
+    // Send the agent command with appropriate newline
+    // Use \r\n for Windows PowerShell compatibility
+    let cmd = format!("{}\r\n", agent);
 
     // Write to session based on type
     if session_type == "local" {

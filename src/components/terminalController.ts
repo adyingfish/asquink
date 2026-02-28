@@ -245,10 +245,18 @@ export class TerminalController {
 
       const session = this.sessions.find(item => item.id === sessionId)
       if (session?.status === 'connected') {
+        // 修复 PowerShell 换行问题
+        // 当用户按下回车键时，xterm.js 可能发送 \r 或 \n
+        // PowerShell 需要 \r\n 来正确执行命令
+        let processedData = data
+        // 处理单独的回车或换行符
+        if (processedData === '\r' || processedData === '\n') {
+          processedData = '\r\n'
+        }
         invoke('write_to_session', {
           sessionId,
           sessionType: session.type,
-          data,
+          data: processedData,
         }).catch(console.error)
       }
     })
@@ -493,10 +501,19 @@ export class TerminalController {
       return
     }
 
+    // 修复 PowerShell 换行问题：将所有换行符标准化为 \r\n
+    let processedText = text
+    // 先将所有 \r\n 转换为 \n，避免重复处理
+    processedText = processedText.replace(/\r\n/g, '\n')
+    // 再将所有单独的 \r 转换为 \n
+    processedText = processedText.replace(/\r/g, '\n')
+    // 最后将所有 \n 转换为 \r\n
+    processedText = processedText.replace(/\n/g, '\r\n')
+
     invoke('write_to_session', {
       sessionId: this.activeSessionId,
       sessionType: session.type,
-      data: text,
+      data: processedText,
     }).catch(console.error)
   }
 }
