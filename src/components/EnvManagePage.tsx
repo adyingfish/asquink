@@ -90,13 +90,22 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const envSessions = sessions.filter(s => s.env_id === selectedEnvId)
 
   const scanAgents = async () => {
-    if (!selectedEnv || selectedEnv.type !== 'local') {
+    if (!selectedEnv) {
+      setDetectedAgents(null)
+      return
+    }
+    if (selectedEnv.type !== 'local' && selectedEnv.type !== 'wsl') {
       setDetectedAgents(null)
       return
     }
     setScanningAgents(true)
     try {
-      const agents = await invoke<AgentInfo[]>('scan_agents')
+      let agents: AgentInfo[]
+      if (selectedEnv.type === 'local') {
+        agents = await invoke<AgentInfo[]>('scan_agents')
+      } else {
+        agents = await invoke<AgentInfo[]>('scan_agents_for_env', { envId: selectedEnv.id })
+      }
       setDetectedAgents(agents)
     } catch (error) {
       console.error('Failed to scan agents:', error)
@@ -364,7 +373,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 {scanningAgents && (
                   <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
                 )}
-                {selectedEnv?.type === 'local' && !scanningAgents && (
+                {(selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl') && !scanningAgents && (
                   <button
                     onClick={scanAgents}
                     className="text-[10px] text-[#8b8fa7] hover:text-[#E8915A] transition-colors"
@@ -417,13 +426,13 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400">
                               未找到
                             </span>
-                          ) : selectedEnv?.type === 'local' ? (
+                          ) : selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl' ? (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500">
                               -
                             </span>
                           ) : (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500">
-                              仅本地环境
+                              仅本地/WSL环境
                             </span>
                           )}
                         </div>

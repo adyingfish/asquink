@@ -109,7 +109,7 @@ pub struct AgentInfo {
 }
 
 // Agent definitions - match frontend AGENTS array
-fn get_agent_definitions() -> Vec<(&'static str, &'static str, &'static str)> {
+pub fn get_agent_definitions() -> Vec<(&'static str, &'static str, &'static str)> {
     vec![
         ("claude", "Claude Code", "claude"),
         ("codex", "Codex", "codex"),
@@ -460,6 +460,26 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
 }
 
 #[tauri::command]
+async fn scan_agents_for_env(state: State<'_, Arc<Mutex<AppState>>>, env_id: String) -> Result<Vec<AgentInfo>, String> {
+    let state = state.lock().await;
+    let env = state.db.get_env(&env_id).await.map_err(|e| e.to_string())?;
+
+    if env.env_type == "local" {
+        // For local env, use the regular scan_agents function
+        drop(state);
+        scan_agents().await
+    } else if env.env_type == "wsl" {
+        // For WSL env, scan inside the WSL distro
+        let distro = env.wsl_distro.ok_or("WSL distribution not configured")?;
+        let user = env.wsl_user.as_deref();
+        wsl::scan_agents_in_distro(&distro, user).await.map_err(|e| e.to_string())
+    } else {
+        // For SSH or other env types, return empty result for now
+        Ok(Vec::new())
+    }
+}
+
+#[tauri::command]
 async fn launch_agent(
     state: State<'_, Arc<Mutex<AppState>>>,
     session_id: String,
@@ -778,6 +798,7 @@ fn main() {
             // Agents
             check_agent_installed,
             scan_agents,
+            scan_agents_for_env,
             launch_agent,
             // Sessions
             create_local_session,

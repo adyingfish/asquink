@@ -298,6 +298,68 @@ fn windows_to_wsl_path(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// Scan for agents in a WSL distribution
+pub async fn scan_agents_in_distro(distro: &str, user: Option<&str>) -> Result<Vec<crate::AgentInfo>> {
+    let agents = crate::get_agent_definitions();
+    let mut result = Vec::new();
+
+    for (id, name, executable) in agents {
+        // Build wsl command to check if executable exists
+        let mut cmd = Command::new("wsl.exe");
+        cmd.arg("--distribution");
+        cmd.arg(distro);
+
+        if let Some(u) = user {
+            cmd.arg("--user");
+            cmd.arg(u);
+        }
+
+        cmd.arg("--exec");
+        cmd.arg("which");
+        cmd.arg(executable);
+
+        let output = cmd.output().await;
+        let installed = output.map(|o| o.status.success()).unwrap_or(false);
+
+        let version = if installed {
+            let mut version_cmd = Command::new("wsl.exe");
+            version_cmd.arg("--distribution");
+            version_cmd.arg(distro);
+
+            if let Some(u) = user {
+                version_cmd.arg("--user");
+                version_cmd.arg(u);
+            }
+
+            version_cmd.arg("--exec");
+            version_cmd.arg(executable);
+            version_cmd.arg("--version");
+
+            let version_output = version_cmd.output().await.ok();
+
+            version_output.and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
+        result.push(crate::AgentInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            executable: executable.to_string(),
+            installed,
+            version,
+        });
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
