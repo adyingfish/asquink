@@ -16,6 +16,13 @@ interface TabBarProps {
   onCloseSession: (id: string) => void
 }
 
+const isPureTerminalSession = (session: Session) => !session.projectId && !session.agentId
+
+const getSessionIcon = (session: Session) => {
+  if (isPureTerminalSession(session)) return '🖥'
+  return session.type === 'local' ? '💻' : '☁️'
+}
+
 export default function TabBar({ sessions, activeSessionId, onSelectSession, onCloseSession }: TabBarProps) {
   const getTabTitle = (session: Session) => {
     // For project-based sessions: <project_name> › <agent_short>
@@ -76,7 +83,7 @@ export default function TabBar({ sessions, activeSessionId, onSelectSession, onC
 
             {/* Environment icon */}
             <span className="text-xs flex-shrink-0">
-              {session.type === 'local' ? '💻' : '☁️'}
+              {getSessionIcon(session)}
             </span>
 
             {/* Standalone session badge */}
@@ -88,7 +95,7 @@ export default function TabBar({ sessions, activeSessionId, onSelectSession, onC
                   color: '#C084FC'
                 }}
               >
-                💬
+                {isPureTerminalSession(session) ? '🖥' : '💬'}
               </span>
             )}
 

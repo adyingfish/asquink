@@ -33,6 +33,8 @@ const getProjectNameFromPath = (value: string) => {
   return segments[segments.length - 1] || normalized
 }
 
+const isPureTerminalSession = (session: Session) => !session.projectId && !session.agentId
+
 export default function Sidebar({
   onAddSession,
   onSessionStatusChange,
@@ -693,6 +695,7 @@ export default function Sidebar({
                       const isAct = activeSessionId === s.id
                       const agent = AGENTS.find(a => a.id === s.agentId)
                       const isDisconnected = s.status === 'disconnected'
+                      const isPureTerminal = isPureTerminalSession(s)
 
                       return (
                         <div
@@ -711,13 +714,13 @@ export default function Sidebar({
                             e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
                           }}
                         >
-                          <span className="text-[11px]">💬</span>
+                          <span className="text-[11px]">{isPureTerminal ? '🖥' : '💬'}</span>
                           <div className="flex-1 min-w-0">
                             <div className="text-[12px] font-medium truncate">
                               {s.lastMsg || agent?.name || s.name}
                             </div>
                             <div className="text-[10px] font-medium mt-0.5" style={{ color: agent?.color || '#4e5270' }}>
-                              {agent?.short || 'Agent'}
+                              {agent?.short || (isPureTerminal ? 'Terminal' : 'Agent')}
                             </div>
                           </div>
                           <SessionBadge s={s} />
