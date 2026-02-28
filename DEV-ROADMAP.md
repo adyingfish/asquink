@@ -1,7 +1,7 @@
 # ASquink 开发路线图
 
 **当前状态：Phase 3 已完成** ✅
-**下一目标：Phase 4 - 视图模式与会话信息**
+**下一目标：Phase 4 - 视图模式切换**
 
 ---
 
@@ -73,7 +73,7 @@ ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连
 
 ### 3.1 环境模型重构 ✅
 - [x] 数据库迁移：`servers` 表 → `envs` 表，新增 `type` 字段
-- [x] 统一环境列表 UI（本地终端 + SSH 服务器）
+- [x] 统一环境列表 UI（本地终端 + SSH 服务器 + WSL）
 - [x] 环境在线状态检测
 - [x] 快速连接入口
 - [x] 环境管理页面
@@ -84,6 +84,7 @@ ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连
 - [x] Tab 标题规则：`<env_name>` 或 `<project_name> › <agent>`
 - [x] 会话状态同步
 - [x] 关闭会话时清理资源
+- [x] 历史会话重连功能
 
 ### 3.3 项目型 Agent 支持 ✅
 - [x] `projects` 表：path + name + env_id
@@ -91,14 +92,23 @@ ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连
 - [x] 项目列表展示（侧边栏）
 - [x] 从项目启动 Agent：自动 cd 到项目目录
 - [x] Agent 类型区分（项目型 vs 独立型）
+- [x] 会话重连时自动启动 Agent
 
-### 3.4 UI 优化 ✅
+### 3.4 WSL 支持 ✅
+- [x] WSL 环境检测和管理
+- [x] WSL 分发版列表
+- [x] WSL 会话创建
+- [x] WSL 环境内 Agent 扫描
+
+### 3.5 UI 优化 ✅
 - [x] 新建会话弹窗（三意图选择：项目编码/AI对话/纯终端）
 - [x] 测试连接功能
 - [x] 会话列表高度修复
 - [x] 环境排序（本地终端永远在最上）
+- [x] 环境管理页面与终端面板切换交互
+- [x] PowerShell 换行符兼容性修复
 
-### 3.5 支持的 Agent
+### 3.6 支持的 Agent
 | Agent | 名称 | 类型 | 颜色 |
 |-------|------|------|------|
 | claude | Claude Code | 项目型 | 🟠 #E8915A |
@@ -109,9 +119,9 @@ ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连
 
 ---
 
-## Phase 4：视图模式与会话信息 🔜 下一步
+## Phase 4：视图模式切换 🔜 下一步
 
-**目标：** 项目型 Agent 支持终端/对话双视图，右侧信息面板
+**目标：** 项目型 Agent 支持终端/对话双视图
 
 ### 4.1 视图模式切换
 - [ ] 4.1.1 顶部视图切换：[⌨ 终端] [💬 对话] [◧ 分屏]
@@ -119,14 +129,8 @@ ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连
 - [ ] 4.1.3 对话视图组件：消息流（user/agent 区分）+ thinking 状态
 - [ ] 4.1.4 消息存储：`messages` 表（session_id, role, text, parts, thinking）
 
-### 4.2 右侧 InfoPanel
-- [ ] 4.2.1 Connection 信息：环境、Agent、项目路径
-- [ ] 4.2.2 同环境会话列表（快速跳转）
-- [ ] 4.2.3 快捷 Prompt 面板（常用模板）
-
 **验收标准：**
 - Claude Code 支持终端/对话/分屏切换
-- 右侧显示当前连接信息和快捷操作
 - 对话消息能显示 thinking 状态
 
 ---
@@ -155,7 +159,7 @@ ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连
 
 | 表名 | 用途 | 关键字段 |
 |------|------|----------|
-| `envs` | 环境配置 | id, name, type(ssh/local), host, port, username, auth_type |
+| `envs` | 环境配置 | id, name, type(ssh/local/wsl), host, port, username, auth_type |
 | `projects` | 项目配置 | id, name, path, env_id |
 | `agents` | Agent 预设 | id, name, color, needs_project |
 | `sessions` | 会话历史 | id, env_id, agent_id, project_id, working_dir, started_at, ended_at |
@@ -188,6 +192,7 @@ npx tsc --noEmit
 
 ## 更新日志
 
+- **2026-03-01**: PowerShell 换行符兼容性修复，WSL 支持完善
 - **2025-02-27**: Phase 3 完成，新建会话弹窗重构，添加 OpenCode Agent
 - **2025-02-26**: 环境管理页面完善，测试连接功能
 - **2025-02-25**: 多 Tab 会话管理，项目型 Agent 支持
