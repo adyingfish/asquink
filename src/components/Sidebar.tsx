@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import type { Session, Env, Project } from '../App'
+import type { Session, Env, Project, AgentInfo } from '../App'
 
 interface SidebarProps {
   onAddSession: (session: Session) => void
@@ -1034,10 +1034,27 @@ function NewSessionModal({
   const [browsing, setBrowsing] = useState(false)
   const [browseEnv, setBrowseEnv] = useState<Env | null>(null)
   const [browseDir, setBrowseDir] = useState('')
+  const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
+  const [scanningAgents, setScanningAgents] = useState(false)
 
   // Agent definitions
   const PROJECT_AGENTS = AGENTS.filter(a => a.needsProject)
   const CHAT_AGENTS = AGENTS.filter(a => !a.needsProject)
+
+  const scanAgents = async () => {
+    // Only scan for local environment for now
+    // For SSH/WSL, we need a connected session to scan
+    setScanningAgents(true)
+    try {
+      const agents = await invoke<AgentInfo[]>('scan_agents')
+      setDetectedAgents(agents)
+    } catch (error) {
+      console.error('Failed to scan agents:', error)
+      setDetectedAgents(null)
+    } finally {
+      setScanningAgents(false)
+    }
+  }
 
   const reset = () => {
     setStep('intent')
@@ -1048,6 +1065,7 @@ function NewSessionModal({
     setBrowsing(false)
     setBrowseEnv(null)
     setBrowseDir('')
+    setDetectedAgents(null)
   }
 
   const goBack = () => {
@@ -1068,14 +1086,28 @@ function NewSessionModal({
   const handleIntent = (i: 'project' | 'chat' | 'terminal') => {
     setIntent(i)
     if (i === 'project') setStep('project')
-    else if (i === 'chat') setStep('agent')
+    else if (i === 'chat') {
+      setStep('agent')
+      // Auto-select local env and scan agents for chat mode
+      const localEnv = envs.find(e => e.type === 'local')
+      if (localEnv) {
+        setSelectedEnv(localEnv)
+        scanAgents()
+      }
+    }
     else if (i === 'terminal') setStep('env')
   }
 
   const handlePickProject = (p: Project) => {
     setSelectedProject(p)
     const env = envs.find(e => e.id === p.env_id)
-    if (env) setSelectedEnv(env)
+    if (env) {
+      setSelectedEnv(env)
+      // Scan agents when selecting a local environment
+      if (env.type === 'local') {
+        scanAgents()
+      }
+    }
     setStep('agent')
   }
 
@@ -1317,13 +1349,19 @@ function NewSessionModal({
                 <span className="text-[12px] font-mono font-medium">{selectedProject?.name}</span>
                 <span className="text-[10px] text-[#4e5270]">{selectedEnv?.type === 'local' ? '💻' : '☁️'} {selectedEnv?.name} · {selectedProject?.path}</span>
               </div>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择 Agent</div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">选择 Agent</div>
+                {scanningAgents && (
+                  <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
+                )}
+              </div>
               {PROJECT_AGENTS.map((a) => (
                 <AgentCard
                   key={a.id}
                   agent={a}
                   selected={selectedAgent === a.id}
                   onClick={() => setSelectedAgent(a.id)}
+                  detectedInfo={detectedAgents?.find(d => d.id === a.id)}
                 />
               ))}
             </>
@@ -1332,13 +1370,19 @@ function NewSessionModal({
           {/* Step: Pick Agent (for chat) */}
           {step === 'agent' && intent === 'chat' && (
             <>
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择 Agent</div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">选择 Agent</div>
+                {scanningAgents && (
+                  <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
+                )}
+              </div>
               {CHAT_AGENTS.map((a) => (
                 <AgentCard
                   key={a.id}
                   agent={a}
                   selected={selectedAgent === a.id}
                   onClick={() => setSelectedAgent(a.id)}
+                  detectedInfo={detectedAgents?.find(d => d.id === a.id)}
                 />
               ))}
 
@@ -1434,7 +1478,15 @@ function IntentCard({ icon, title, desc, onClick }: { icon: string; title: strin
 }
 
 // Agent Card Component
-function AgentCard({ agent, selected, onClick }: { agent: typeof AGENTS[0]; selected: boolean; onClick: () => void }) {
+function AgentCard({ agent, selected, onClick, detectedInfo }: {
+  agent: typeof AGENTS[0];
+  selected: boolean;
+  onClick: () => void;
+  detectedInfo?: AgentInfo | null;
+}) {
+  const isInstalled = detectedInfo?.installed ?? null
+  const version = detectedInfo?.version
+
   return (
     <div
       onClick={onClick}
@@ -1446,8 +1498,25 @@ function AgentCard({ agent, selected, onClick }: { agent: typeof AGENTS[0]; sele
     >
       <div className="w-1.5 h-5.5 rounded" style={{ backgroundColor: agent.color }} />
       <div className="flex-1">
-        <div className="text-[13px] font-medium">{agent.name}</div>
-        <div className="text-[11px] text-[#4e5270]">{agent.short}</div>
+        <div className="flex items-center gap-2">
+          <div className="text-[13px] font-medium">{agent.name}</div>
+          {isInstalled === true && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">
+              已安装
+            </span>
+          )}
+          {isInstalled === false && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400">
+              未找到
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-[11px] text-[#4e5270]">{agent.short}</div>
+          {version && (
+            <div className="text-[10px] text-[#6b7280] font-mono">{version}</div>
+          )}
+        </div>
       </div>
       {selected && <span style={{ color: agent.color }} className="text-base">✓</span>}
     </div>

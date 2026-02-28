@@ -99,6 +99,26 @@ pub struct AgentStatus {
     version: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+pub struct AgentInfo {
+    id: String,
+    name: String,
+    executable: String,
+    installed: bool,
+    version: Option<String>,
+}
+
+// Agent definitions - match frontend AGENTS array
+fn get_agent_definitions() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("claude", "Claude Code", "claude"),
+        ("codex", "Codex", "codex"),
+        ("gemini", "Gemini CLI", "gemini"),
+        ("opencode", "OpenCode", "opencode"),
+        ("openclaw", "OpenClaw", "openclaw"),
+    ]
+}
+
 // Project structure
 #[derive(serde::Serialize)]
 pub struct Project {
@@ -366,7 +386,8 @@ async fn delete_project(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> R
 // Agent management commands
 #[tauri::command]
 async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
-    let output = tokio::process::Command::new("which")
+    let which_cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
+    let output = tokio::process::Command::new(which_cmd)
         .arg(&agent)
         .output()
         .await
@@ -393,6 +414,49 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
     };
 
     Ok(AgentStatus { installed, version })
+}
+
+#[tauri::command]
+async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
+    let agents = get_agent_definitions();
+    let which_cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
+    let mut result = Vec::new();
+
+    for (id, name, executable) in agents {
+        let output = tokio::process::Command::new(which_cmd)
+            .arg(executable)
+            .output()
+            .await;
+
+        let installed = output.map(|o| o.status.success()).unwrap_or(false);
+        let version = if installed {
+            let version_output = tokio::process::Command::new(executable)
+                .arg("--version")
+                .output()
+                .await
+                .ok();
+
+            version_output.and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            })
+        } else {
+            None
+        };
+
+        result.push(AgentInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            executable: executable.to_string(),
+            installed,
+            version,
+        });
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
@@ -713,6 +777,7 @@ fn main() {
             delete_project,
             // Agents
             check_agent_installed,
+            scan_agents,
             launch_agent,
             // Sessions
             create_local_session,

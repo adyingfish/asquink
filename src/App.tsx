@@ -5,6 +5,14 @@ import TabBar from './components/TabBar'
 import TerminalPanel from './components/TerminalPanel'
 import EnvManagePage from './components/EnvManagePage'
 
+export interface AgentInfo {
+  id: string
+  name: string
+  executable: string
+  installed: boolean
+  version?: string | null
+}
+
 export interface Session {
   id: string
   name: string
@@ -20,6 +28,7 @@ export interface Session {
   startedAt?: string      // Session start time
   endedAt?: string        // Session end time
   isReconnect?: boolean   // Whether this is a historical session to reconnect
+  agents?: AgentInfo[]    // Detected agents for this session
 }
 
 // Session record from database
@@ -105,10 +114,25 @@ function App() {
     setActiveSessionId(session.id)
   }
 
+  const scanAgentsForSession = async (sessionId: string) => {
+    try {
+      const agents = await invoke<AgentInfo[]>('scan_agents')
+      setSessions(prev => prev.map(s =>
+        s.id === sessionId ? { ...s, agents } : s
+      ))
+    } catch (error) {
+      console.error('Failed to scan agents:', error)
+    }
+  }
+
   const updateSessionStatus = (id: string, status: Session['status']) => {
     setSessions(prev => prev.map(s =>
       s.id === id ? { ...s, status } : s
     ))
+    // Scan agents when session connects
+    if (status === 'connected') {
+      scanAgentsForSession(id)
+    }
   }
 
   const closeSession = async (id: string) => {
