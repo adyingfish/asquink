@@ -156,7 +156,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let app_dir = app_handle.path().app_data_dir()?;
     std::fs::create_dir_all(&app_dir)?;
 
-    let db_path = app_dir.join("agenthub.db");
+    let db_path = app_dir.join("asquink.db");
     let db_url = format!("sqlite:{}?mode=rwc", db_path.to_str().unwrap());
     let db = tauri::async_runtime::block_on(Database::new(&db_url))?;
 

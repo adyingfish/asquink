@@ -1,7 +1,7 @@
 {
-  "productName": "AgentHub",
+  "productName": "ASquink",
   "version": "0.0.0",
-  "identifier": "com.agenthub.app",
+  "identifier": "com.asquink.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -11,7 +11,7 @@
   "app": {
     "windows": [
       {
-        "title": "AgentHub",
+        "title": "ASquink",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

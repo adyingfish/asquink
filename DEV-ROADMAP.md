@@ -1,4 +1,4 @@
-# AgentHub 开发路线图
+# ASquink 开发路线图
 
 **当前状态：Phase 3 已完成** ✅
 **下一目标：Phase 4 - 视图模式与会话信息**
@@ -7,7 +7,7 @@
 
 ## 项目概览
 
-AgentHub 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连接，集成多个 AI Agent（Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw）。
+ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连接，集成多个 AI Agent（Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw）。
 
 ### 技术栈
 - **前端**: Tauri v2 + React + TypeScript + Tailwind CSS

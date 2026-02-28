@@ -1,4 +1,6 @@
-# AgentHub
+# ASquink
+
+A Squink，A Greedy Squink
 
 AI Agent Terminal Hub - Unified management for Claude Code, Codex, and more.
 
@@ -13,8 +15,8 @@ AI Agent Terminal Hub - Unified management for Claude Code, Codex, and more.
 
 ```bash
 # Clone repository
-git clone https://github.com/adyingfish/agenthub.git
-cd agenthub
+git clone https://github.com/adyingfish/asquink.git
+cd asquink
 
 # Install dependencies
 npm install
