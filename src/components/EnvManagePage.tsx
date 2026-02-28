@@ -223,7 +223,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   // New state for ACP Agent tab
   const [activeTab, setActiveTab] = useState<'envs' | 'agents'>('envs')
   const [selectedAgentId, setSelectedAgentId] = useState<string>('claude')
-  const [acpAgents, setAcpAgents] = useState<AcpAgent[]>(MOCK_ACP_AGENTS)
+  const [acpAgents] = useState<AcpAgent[]>(MOCK_ACP_AGENTS)
 
   useEffect(() => {
     loadData()

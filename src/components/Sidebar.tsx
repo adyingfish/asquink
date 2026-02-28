@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
 
 interface SidebarProps {
@@ -408,16 +409,37 @@ export default function Sidebar({
     return 0
   })
 
+  const onlineEnvCount = envs.filter(env => (envStatuses[env.id] || env.status) === 'online').length
+  const activeSessionCount = sessions.filter(session => session.status !== 'disconnected').length
+
   return (
-    <div className="w-[272px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0">
-      {/* Search */}
-      <div className="p-2.5 pb-1">
-        <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-[#151820] border border-[#1d2030]">
-          <span className="text-xs text-[#4e5270]">🔍</span>
+    <div className="w-[280px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0">
+      <div className="px-3.5 py-3 border-b border-[#1d2030]">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#E8915A] to-[#D46A28] shadow-[0_8px_24px_rgba(232,145,90,0.24)] flex items-center justify-center text-white text-sm font-semibold">
+            AQ
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-[13px] font-semibold text-[#f5f7fb]">ASquink</div>
+            <div className="text-[10px] text-[#6f748f] font-mono">
+              {onlineEnvCount}/{envs.length || 0} envs online · {activeSessionCount} active
+            </div>
+          </div>
+          <button
+            onClick={() => setShowNewSession(true)}
+            className="w-8 h-8 rounded-lg border border-[#282d3e] bg-[#151820] text-[#8b8fa7] hover:text-[#f5f7fb] hover:border-[#3a3f57] hover:bg-[#1b1f2b] transition-colors flex items-center justify-center"
+            aria-label="New session"
+          >
+            <Plus size={15} />
+          </button>
+        </div>
+
+        <div className="mt-3 flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-[#151820] border border-[#1d2030]">
+          <Search size={13} className="text-[#4e5270]" />
           <input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="搜索会话 / 项目..."
+            placeholder="搜索会话 / 项目 / 环境..."
             className="flex-1 bg-transparent border-none outline-none text-[#e2e4ed] text-xs placeholder-[#4e5270]"
           />
         </div>
@@ -432,7 +454,7 @@ export default function Sidebar({
       )}
 
       {/* Tree */}
-      <div className="flex-1 overflow-y-auto p-1.5">
+      <div className="flex-1 overflow-y-auto p-2">
         {isLoading ? (
           <div className="text-xs text-[#4e5270] p-4 text-center">加载中...</div>
         ) : (
@@ -565,14 +587,16 @@ export default function Sidebar({
                                 <button
                                   onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
                                   className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
+                                  aria-label="Reconnect session"
                                 >
-                                  ↻
+                                  <RefreshCw size={12} />
                                 </button>
                                 <button
                                   onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
                                   className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
+                                  aria-label="Delete session"
                                 >
-                                  🗑
+                                  <Trash2 size={12} />
                                 </button>
                               </div>
                             )}
@@ -659,14 +683,16 @@ export default function Sidebar({
                                         <button
                                           onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
                                           className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
+                                          aria-label="Reconnect session"
                                         >
-                                          ↻
+                                          <RefreshCw size={12} />
                                         </button>
                                         <button
                                           onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
                                           className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
+                                          aria-label="Delete session"
                                         >
-                                          🗑
+                                          <Trash2 size={12} />
                                         </button>
                                       </div>
                                     )}
@@ -674,12 +700,12 @@ export default function Sidebar({
                                 )
                               })}
                               <div
-                                className="flex items-center gap-1 px-2 py-1 text-[10px] text-[#4e5270] cursor-pointer rounded-md"
+                                className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-[#4e5270] cursor-pointer rounded-md"
                                 onClick={() => setShowNewSession(true)}
                                 onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
                                 onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
                               >
-                                <span>＋</span> 添加 Agent
+                                <Plus size={12} /> 添加 Agent
                               </div>
                             </div>
                           )}
@@ -729,14 +755,16 @@ export default function Sidebar({
                               <button
                                 onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
                                 className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
+                                aria-label="Reconnect session"
                               >
-                                ↻
+                                <RefreshCw size={12} />
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
                                 className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
+                                aria-label="Delete session"
                               >
-                                🗑
+                                <Trash2 size={12} />
                               </button>
                             </div>
                           )}
@@ -746,7 +774,7 @@ export default function Sidebar({
 
                     {/* New session in env */}
                     <div
-                      className="flex items-center gap-1.25 px-2 py-1.25 text-[11px] text-[#4e5270] cursor-pointer rounded-md mt-0.5"
+                      className="flex items-center gap-1.5 px-2 py-1.25 text-[11px] text-[#4e5270] cursor-pointer rounded-md mt-0.5"
                       onClick={() => setShowNewSession(true)}
                       onMouseEnter={(e) => {
                         e.currentTarget.style.color = '#E8915A'
@@ -757,7 +785,7 @@ export default function Sidebar({
                         e.currentTarget.style.background = 'transparent'
                       }}
                     >
-                      <span>＋</span> 新建会话
+                      <Plus size={12} /> 新建会话
                     </div>
                   </div>
                 )}
@@ -775,29 +803,32 @@ export default function Sidebar({
       </div>
 
       {/* Bottom */}
-      <div className="px-2.5 py-2 border-t border-[#1d2030] flex flex-col gap-1">
+      <div className="px-3.5 py-3 border-t border-[#1d2030] bg-[#0c0e13] flex flex-col gap-2">
         <button
           onClick={() => setShowNewSession(true)}
-          className="w-full py-2.5 rounded-lg border border-[#E8915A]/30 bg-gradient-to-br from-[#E8915A]/[0.09] to-[#E8915A]/[0.03] text-[#E8915A] text-[12.5px] font-semibold flex items-center justify-center gap-1.5 hover:from-[#E8915A]/[0.15] hover:to-[#E8915A]/[0.06] transition-all cursor-pointer"
+          className="w-full h-10 rounded-xl border border-[#E8915A]/30 bg-gradient-to-br from-[#E8915A]/[0.12] to-[#E8915A]/[0.04] text-[#E8915A] text-[12.5px] font-semibold flex items-center justify-center gap-1.5 hover:from-[#E8915A]/[0.18] hover:to-[#E8915A]/[0.07] transition-all cursor-pointer"
         >
-          ＋ 新建会话
+          <Plus size={14} /> 新建会话
         </button>
-        <div className="flex justify-center gap-4 py-1">
-          <span
+        <div className="flex items-center gap-3 text-[10px] text-[#4e5270]">
+          <button
             onClick={onOpenEnvManage}
-            className="text-[11px] text-[#4e5270] cursor-pointer"
-            onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
-            onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
+            className="inline-flex items-center gap-1.5 text-[11px] text-[#4e5270] cursor-pointer hover:text-[#E8915A] transition-colors"
+            aria-label="Environment settings"
           >
-            ⚙ 环境管理
-          </span>
-          <span
-            className="text-[11px] text-[#4e5270] cursor-pointer"
-            onMouseEnter={(e) => e.currentTarget.style.color = '#8b8fa7'}
-            onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
-          >
-            🔑 API Keys
-          </span>
+            <Settings2 size={12} />
+            环境管理
+          </button>
+          <div className="ml-auto flex items-center gap-3">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" />
+              PTY
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#4ADE80]" />
+              ACP
+            </span>
+          </div>
         </div>
       </div>
 
@@ -856,23 +887,38 @@ export default function Sidebar({
 
 // Session badge component
 function SessionBadge({ s }: { s: Session }) {
+  const badgeTone = s.mode === 'chat'
+    ? {
+        label: 'CHAT',
+        color: '#C084FC',
+        background: 'rgba(192, 132, 252, 0.1)',
+        border: 'rgba(192, 132, 252, 0.18)',
+      }
+    : {
+        label: 'PTY',
+        color: '#60A5FA',
+        background: 'rgba(96, 165, 250, 0.1)',
+        border: 'rgba(96, 165, 250, 0.18)',
+      }
+
   return (
-    <div className="flex flex-col items-end justify-center gap-0.5 flex-shrink-0 min-h-[34px]">
+    <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 min-h-[34px]">
       <span
-        className="text-[8.5px] px-1.5 py-0.5 rounded"
+        className="h-5 px-1.5 rounded-md border text-[8.5px] font-semibold tracking-[0.08em] inline-flex items-center"
         style={{
-          background: s.mode === 'chat' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(96, 165, 250, 0.08)',
-          color: s.mode === 'chat' ? '#C084FC' : '#60A5FA',
+          background: badgeTone.background,
+          color: badgeTone.color,
+          borderColor: badgeTone.border,
         }}
       >
-        {s.mode === 'chat' ? '💬' : '⌨'}
+        {badgeTone.label}
       </span>
       <span className="text-[9px] min-h-[12px]">
         {s.status === 'connected' && s.statusText && (
           <span className="text-[#4ADE80] font-medium">{s.statusText}</span>
         )}
         {s.status === 'disconnected' && (
-          <span className="text-[#60A5FA]">✓ 已断开</span>
+          <span className="text-[#60A5FA]">已断开</span>
         )}
       </span>
     </div>
