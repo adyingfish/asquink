@@ -41,6 +41,8 @@ impl SshSession {
         port: u16,
         username: &str,
         auth: SshAuth,
+        cols: u16,
+        rows: u16,
         app_handle: tauri::AppHandle,
     ) -> Result<Self> {
         let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
@@ -139,7 +141,15 @@ impl SshSession {
         let channel_id = channel.id();
 
         channel
-            .request_pty(true, "xterm-256color", 80, 24, 0, 0, &[])
+            .request_pty(
+                true,
+                "xterm-256color",
+                u32::from(cols),
+                u32::from(rows),
+                0,
+                0,
+                &[],
+            )
             .await?;
 
         channel.request_shell(true).await?;

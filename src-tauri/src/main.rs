@@ -547,6 +547,8 @@ async fn create_local_session(
 async fn create_ssh_session(
     state: State<'_, Arc<Mutex<AppState>>>,
     session_id: String,
+    cols: u16,
+    rows: u16,
     req: CreateSshSessionRequest,
     session_info: Option<CreateSessionInfo>,
     app_handle: tauri::AppHandle,
@@ -581,6 +583,8 @@ async fn create_ssh_session(
         port,
         &username,
         auth,
+        cols,
+        rows,
         app_handle,
     ).await.map_err(|e| e.to_string())?;
 

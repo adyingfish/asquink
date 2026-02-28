@@ -13,6 +13,7 @@ interface SidebarProps {
   isLoading?: boolean
   onOpenEnvManage?: () => void
   refreshKey?: number
+  getPreferredPtySize: () => { cols: number; rows: number }
 }
 
 // Agent definitions with colors
@@ -35,6 +36,7 @@ export default function Sidebar({
   isLoading,
   onOpenEnvManage,
   refreshKey,
+  getPreferredPtySize,
 }: SidebarProps) {
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -131,6 +133,7 @@ export default function Sidebar({
     })
 
     try {
+      const { cols, rows } = getPreferredPtySize()
       const sessionInfo = {
         name: env.name,
         envId: env.id,
@@ -146,8 +149,8 @@ export default function Sidebar({
       await invoke('create_local_session', {
         sessionId: id,
         shell: null,
-        cols: 80,
-        rows: 24,
+        cols,
+        rows,
         workingDir: projectPath || null,
         sessionInfo,
       })
@@ -197,8 +200,11 @@ export default function Sidebar({
     })
 
     try {
+      const { cols, rows } = getPreferredPtySize()
       await invoke('create_ssh_session', {
         sessionId,
+        cols,
+        rows,
         req: {
           serverId: env.id,
           password: pwd,
@@ -261,11 +267,12 @@ export default function Sidebar({
     })
 
     try {
+      const { cols, rows } = getPreferredPtySize()
       await invoke('create_wsl_session', {
         sessionId,
         envId: env.id,
-        cols: 80,
-        rows: 24,
+        cols,
+        rows,
         workingDir: projectPath || null,
         sessionInfo: {
           name: env.name,

@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TerminalPanel from './components/TerminalPanel'
 import EnvManagePage from './components/EnvManagePage'
+import { TerminalController } from './components/terminalController'
 
 // Agent IDs for auto-launch
 const AGENT_IDS = ['claude', 'codex', 'gemini', 'opencode', 'openclaw']
@@ -77,10 +78,21 @@ function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [showEnvManage, setShowEnvManage] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const terminalControllerRef = useRef<TerminalController | null>(null)
+
+  if (!terminalControllerRef.current) {
+    terminalControllerRef.current = new TerminalController()
+  }
 
   // Load historical sessions on app start
   useEffect(() => {
     loadHistoricalSessions()
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      terminalControllerRef.current?.dispose()
+    }
   }, [])
 
   const loadHistoricalSessions = async () => {
@@ -183,6 +195,8 @@ function App() {
     setActiveSessionId(oldSession.id)
 
     try {
+      const { cols, rows } = terminalControllerRef.current?.getPreferredPtySize() ?? { cols: 80, rows: 24 }
+
       // Reopen session in database
       await invoke('reopen_session', { sessionId: oldSession.id })
 
@@ -191,8 +205,8 @@ function App() {
         await invoke('create_local_session', {
           sessionId: oldSession.id,
           shell: null,
-          cols: 80,
-          rows: 24,
+          cols,
+          rows,
           workingDir: oldSession.projectPath,
           sessionInfo: null // Don't create new DB record
         })
@@ -200,8 +214,8 @@ function App() {
         await invoke('create_wsl_session', {
           sessionId: oldSession.id,
           envId: oldSession.envId,
-          cols: 80,
-          rows: 24,
+          cols,
+          rows,
           workingDir: oldSession.projectPath,
           sessionInfo: null
         })
@@ -217,6 +231,8 @@ function App() {
 
         await invoke('create_ssh_session', {
           sessionId: oldSession.id,
+          cols,
+          rows,
           req: {
             serverId: oldSession.envId,
             password: null,
@@ -261,6 +277,9 @@ function App() {
     setShowEnvManage(false)
   }
 
+  const getPreferredPtySize = () =>
+    terminalControllerRef.current?.getPreferredPtySize() ?? { cols: 80, rows: 24 }
+
   return (
     <div className="h-screen w-screen flex bg-dark-900 text-gray-200 overflow-hidden">
       <Sidebar
@@ -274,28 +293,28 @@ function App() {
         isLoading={isLoading}
         onOpenEnvManage={() => setShowEnvManage(true)}
         refreshKey={refreshKey}
+        getPreferredPtySize={getPreferredPtySize}
       />
       <div className="flex-1 flex flex-col min-w-0">
-        {showEnvManage ? (
+        <div className={showEnvManage ? 'hidden' : 'flex flex-1 flex-col min-w-0 min-h-0'}>
+          <TabBar
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+            onSelectSession={setActiveSessionId}
+            onCloseSession={closeSession}
+          />
+          <TerminalPanel
+            controller={terminalControllerRef.current}
+            sessions={sessions}
+            activeSessionId={activeSessionId}
+          />
+        </div>
+        <div className={showEnvManage ? 'flex flex-1 min-w-0 min-h-0' : 'hidden'}>
           <EnvManagePage
             onBack={() => setShowEnvManage(false)}
             onEnvChange={() => setRefreshKey(k => k + 1)}
           />
-        ) : (
-          <>
-            <TabBar
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              onSelectSession={setActiveSessionId}
-              onCloseSession={closeSession}
-            />
-            <TerminalPanel
-              sessions={sessions}
-              activeSessionId={activeSessionId}
-              onSessionStatusChange={updateSessionStatus}
-            />
-          </>
-        )}
+        </div>
       </div>
     </div>
   )
