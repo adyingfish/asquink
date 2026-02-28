@@ -107,18 +107,19 @@ impl WslManager {
             cmd.arg(u);
         }
 
-        // Set working directory
-        if let Some(ref dir) = working_dir {
+        // Set working directory - default to ~ (user's home) if not specified
+        let wsl_path = working_dir.as_ref().map(|dir| {
             // Convert Windows path to WSL path if needed
-            let wsl_path = if dir.contains(':') {
+            if dir.contains(':') {
                 // Windows path like C:\Users\... -> /mnt/c/Users/...
                 self::windows_to_wsl_path(dir)
             } else {
                 dir.clone()
-            };
-            cmd.arg("--cd");
-            cmd.arg(&wsl_path);
-        }
+            }
+        }).unwrap_or_else(|| "~".to_string());
+
+        cmd.arg("--cd");
+        cmd.arg(&wsl_path);
 
         // Start with login shell
         cmd.arg("--exec");
