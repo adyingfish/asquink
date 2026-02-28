@@ -26,6 +26,7 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
   const sessionsRef = useRef(sessions)
   const activeSessionIdRef = useRef(activeSessionId)
   const isCopyingRef = useRef(false)
+  const scrollTimeoutRef = useRef<number | null>(null)
 
   // Keep refs updated
   useEffect(() => {
@@ -212,6 +213,10 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
     fitAddonRef.current = fitAddon
 
     return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+        scrollTimeoutRef.current = null
+      }
       if (containerRef.current) {
         containerRef.current.removeEventListener('paste', handlePaste as EventListener)
         const textarea = containerRef.current.querySelector('textarea.xterm-helper-textarea')
@@ -287,18 +292,31 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
           // Ignore events for other sessions
           if (activeSessionIdRef.current !== currentSessionId) return
 
+          let textToWrite: string
           if (event.payload instanceof Array) {
             const data = new Uint8Array(event.payload as number[])
             const decoder = new TextDecoder()
-            terminal.write(decoder.decode(data))
+            textToWrite = decoder.decode(data)
           } else if (typeof event.payload === 'string') {
-            terminal.write(event.payload)
+            textToWrite = event.payload
+          } else {
+            return
           }
 
-          // Scroll to bottom after writing data
-          setTimeout(() => {
-            terminal.scrollToBottom()
-          }, 0)
+          // Write with callback that fires when data is parsed
+          terminal.write(textToWrite, () => {
+            // Debounced scroll to bottom - wait for data to settle
+            if (scrollTimeoutRef.current) {
+              clearTimeout(scrollTimeoutRef.current)
+            }
+            scrollTimeoutRef.current = window.setTimeout(() => {
+              terminal.scrollToBottom()
+              // Double-check after a short delay to ensure we're really at bottom
+              setTimeout(() => {
+                terminal.scrollToBottom()
+              }, 30)
+            }, 50)
+          })
         })
 
         // Check again after async operation
@@ -336,6 +354,11 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
 
     return () => {
       listenerSetupRef.current.cancelled = true
+
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+        scrollTimeoutRef.current = null
+      }
 
       if (disposableRef.current) {
         disposableRef.current.dispose()
@@ -377,7 +400,11 @@ export default function TerminalPanel({ sessions, activeSessionId }: TerminalPan
       <div
         ref={containerRef}
         className="flex-1"
-        style={{ visibility: activeSession ? 'visible' : 'hidden' }}
+        style={{
+          visibility: activeSession ? 'visible' : 'hidden',
+          paddingBottom: '4px',
+          boxSizing: 'border-box'
+        }}
       />
       {!activeSession && (
         <div className="absolute inset-0 flex items-center justify-center text-gray-600">
