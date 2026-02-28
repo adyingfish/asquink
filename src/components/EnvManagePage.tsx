@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import type { Env, Project, SessionRecord } from '../App'
+import type { Env, Project, SessionRecord, AgentInfo } from '../App'
 
 // Agent definitions with colors
 const AGENTS = [
   { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true },
-  { id: 'codex', name: 'Codex', short: 'Codex', color: '#4ADE80', needsProject: true },
+  { id: 'codex', name: 'Codex', short: 'Codex', color: '#E5E7EB', needsProject: true },
   { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true },
-  { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#F472B6', needsProject: true },
-  { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#C084FC', needsProject: false },
+  { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#78716C', needsProject: true },
+  { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#EF4444', needsProject: false },
 ]
 
 // WSL Distro interface
@@ -45,6 +45,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     wsl_distro: '',
     wsl_user: '',
   })
+  const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
+  const [scanningAgents, setScanningAgents] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -86,6 +88,28 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const selectedEnv = envs.find(e => e.id === selectedEnvId)
   const envProjects = projects.filter(p => p.env_id === selectedEnvId)
   const envSessions = sessions.filter(s => s.env_id === selectedEnvId)
+
+  const scanAgents = async () => {
+    if (!selectedEnv || selectedEnv.type !== 'local') {
+      setDetectedAgents(null)
+      return
+    }
+    setScanningAgents(true)
+    try {
+      const agents = await invoke<AgentInfo[]>('scan_agents')
+      setDetectedAgents(agents)
+    } catch (error) {
+      console.error('Failed to scan agents:', error)
+      setDetectedAgents(null)
+    } finally {
+      setScanningAgents(false)
+    }
+  }
+
+  // Scan agents when selected environment changes
+  useEffect(() => {
+    scanAgents()
+  }, [selectedEnvId])
 
   const deleteEnv = async (id: string) => {
     if (!confirm('确定删除此环境？所有关联会话也会被移除。')) return
@@ -334,29 +358,115 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
             )}
 
             {/* Agents on this env */}
-            {(() => {
-              const envAgentIds = new Set(envSessions.filter(s => s.agent_id).map(s => s.agent_id))
-              const envAgents = Array.from(envAgentIds).map(id => AGENTS.find(a => a.id === id)).filter(Boolean)
-              return envAgents.length > 0 && (
-                <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
-                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">🤖 此环境上的 Agent</div>
-                  {envAgents.map(agent => (
-                    <div key={agent!.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[#1b1f2b] mb-1.5">
-                      <div className="w-1.5 h-5 rounded" style={{ backgroundColor: agent!.color }} />
+            <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">🤖 此环境上的 Agent</div>
+                {scanningAgents && (
+                  <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
+                )}
+                {selectedEnv?.type === 'local' && !scanningAgents && (
+                  <button
+                    onClick={scanAgents}
+                    className="text-[10px] text-[#8b8fa7] hover:text-[#E8915A] transition-colors"
+                  >
+                    重新扫描
+                  </button>
+                )}
+              </div>
+
+              {(() => {
+                // Separate OpenClaw from others
+                const openClawAgent = AGENTS.find(a => a.id === 'openclaw')!
+                const mainAgents = AGENTS.filter(a => a.id !== 'openclaw')
+
+                // Sort main agents in fixed order: claude > codex > gemini > opencode
+                const sortedMainAgents = [
+                  mainAgents.find(a => a.id === 'claude')!,
+                  mainAgents.find(a => a.id === 'codex')!,
+                  mainAgents.find(a => a.id === 'gemini')!,
+                  mainAgents.find(a => a.id === 'opencode')!,
+                ].filter(Boolean)
+
+                // Split into installed and not installed
+                const installedMainAgents = sortedMainAgents.filter(a => {
+                  const detected = detectedAgents?.find(d => d.id === a.id)
+                  return detected?.installed === true
+                })
+                const notInstalledMainAgents = sortedMainAgents.filter(a => {
+                  const detected = detectedAgents?.find(d => d.id === a.id)
+                  return detected?.installed !== true
+                })
+
+                // Render helper
+                const renderAgent = (agent: typeof AGENTS[0]) => {
+                  const detected = detectedAgents?.find(d => d.id === agent.id)
+                  const isInstalled = detected?.installed ?? null
+                  const sessionCount = envSessions.filter(s => s.agent_id === agent.id).length
+
+                  return (
+                    <div key={agent.id} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[#1b1f2b] mb-1.5">
+                      <div className="w-1.5 h-5 rounded" style={{ backgroundColor: agent.color }} />
                       <div className="flex-1">
-                        <div className="text-xs font-medium">{agent!.name}</div>
-                        <div className="text-[10px] text-[#4e5270]">
-                          {envSessions.filter(s => s.agent_id === agent!.id).length} 个会话
+                        <div className="flex items-center gap-2">
+                          <div className="text-xs font-medium">{agent.name}</div>
+                          {isInstalled === true ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">
+                              已安装
+                            </span>
+                          ) : isInstalled === false ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400">
+                              未找到
+                            </span>
+                          ) : selectedEnv?.type === 'local' ? (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500">
+                              -
+                            </span>
+                          ) : (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500">
+                              仅本地环境
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {detected?.version && (
+                            <div className="text-[10px] text-[#6b7280] font-mono">{detected.version}</div>
+                          )}
+                          {sessionCount > 0 && (
+                            <div className="text-[10px] text-[#4e5270]">
+                              {sessionCount} 个会话
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: `${agent!.color}20`, color: agent!.color }}>
-                        {agent!.short}
+                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: `${agent.color}20`, color: agent.color }}>
+                        {agent.short}
                       </span>
                     </div>
-                  ))}
-                </div>
-              )
-            })()}
+                  )
+                }
+
+                return (
+                  <>
+                    {/* Installed main agents */}
+                    {installedMainAgents.map(renderAgent)}
+
+                    {/* Divider if both sections have content */}
+                    {installedMainAgents.length > 0 && notInstalledMainAgents.length > 0 && (
+                      <div className="h-px bg-[#1d2030] my-3" />
+                    )}
+
+                    {/* Not installed main agents */}
+                    {notInstalledMainAgents.map(renderAgent)}
+
+                    {/* Divider before OpenClaw */}
+                    <div className="h-px bg-[#1d2030] my-3" />
+
+                    {/* OpenClaw - always at bottom */}
+                    {renderAgent(openClawAgent)}
+                  </>
+                )
+              })()}
+            </div>
 
             {/* Danger zone */}
             {selectedEnv.type !== 'local' && (
