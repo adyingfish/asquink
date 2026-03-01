@@ -410,9 +410,6 @@ export default function Sidebar({
     return 0
   })
 
-  const onlineEnvCount = envs.filter(env => (envStatuses[env.id] || env.status) === 'online').length
-  const activeSessionCount = sessions.filter(session => session.status !== 'disconnected').length
-
   return (
     <div
       className="w-[260px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0 relative"
@@ -424,10 +421,7 @@ export default function Sidebar({
             AQ
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-[13px] font-semibold text-[#f5f7fb]">ASquink</div>
-            <div className="text-[10px] text-[#6f748f] font-mono">
-              {onlineEnvCount}/{envs.length || 0} envs online · {activeSessionCount} active
-            </div>
+            <div className="text-[15px] font-semibold text-[#f5f7fb]">ASquink</div>
           </div>
           <button
             onClick={() => setShowNewSession(true)}
