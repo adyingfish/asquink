@@ -34,7 +34,9 @@ const getProjectNameFromPath = (value: string) => {
   return segments[segments.length - 1] || normalized
 }
 
-const isPureTerminalSession = (session: Session) => !session.projectId && !session.agentId
+const hasProjectContext = (session: Session) => Boolean(session.projectId || session.projectName || session.projectPath)
+
+const isPureTerminalSession = (session: Session) => !hasProjectContext(session) && !session.agentId
 
 export default function Sidebar({
   onAddSession,
@@ -124,22 +126,12 @@ export default function Sidebar({
     return env.name
   }
 
-  const resolveProjectRecord = (envId: string, projectName?: string, projectPath?: string) => {
-    if (!projectName || !projectPath) return undefined
-    return projects.find(project =>
-      project.env_id === envId &&
-      project.name === projectName &&
-      project.path === projectPath
-    )
-  }
-
   // 创建本地会话（带 Agent 和可选项目）
-  const createLocalSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
+  const createLocalSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
     const id = `local-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
-    const project = resolveProjectRecord(env.id, projectId, projectPath)
 
-    console.log('Creating local session:', { id, envId: env.id, agentId, projectId, projectPath })
+    console.log('Creating local session:', { id, envId: env.id, agentId, project })
 
     onAddSession({
       id,
@@ -147,8 +139,9 @@ export default function Sidebar({
       type: 'local',
       envId: env.id,
       agentId: agentId || undefined,
-      projectId,
-      projectPath,
+      projectId: project?.id,
+      projectName: project?.name,
+      projectPath: project?.path,
       status: 'connecting',
       mode: agent?.needsProject === false ? 'chat' : 'terminal',
       statusText: '连接中...',
@@ -161,17 +154,17 @@ export default function Sidebar({
         envId: env.id,
         agentId: agentId || null,
         projectId: project?.id || null,
-        workingDir: projectPath || null,
+        workingDir: project?.path || null,
       }
 
-      console.log('Invoking create_local_session with:', { sessionId: id, workingDir: projectPath, sessionInfo })
+      console.log('Invoking create_local_session with:', { sessionId: id, workingDir: project?.path, sessionInfo })
 
       await invoke('create_local_session', {
         sessionId: id,
         shell: null,
         cols,
         rows,
-        workingDir: projectPath || null,
+        workingDir: project?.path || null,
         sessionInfo,
       })
       onSessionStatusChange?.(id, 'connected')
@@ -202,10 +195,9 @@ export default function Sidebar({
   }
 
   // 创建 SSH 会话（带 Agent 和可选项目）
-  const createSshSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string, pwd?: string | null) => {
+  const createSshSessionWithAgent = async (env: Env, agentId: string | null, project?: Project, pwd?: string | null) => {
     const sessionId = `ssh-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
-    const project = resolveProjectRecord(env.id, projectId, projectPath)
 
     onAddSession({
       id: sessionId,
@@ -213,8 +205,9 @@ export default function Sidebar({
       type: 'ssh',
       envId: env.id,
       agentId: agentId || undefined,
-      projectId,
-      projectPath,
+      projectId: project?.id,
+      projectName: project?.name,
+      projectPath: project?.path,
       status: 'connecting',
       mode: agent?.needsProject === false ? 'chat' : 'terminal',
       statusText: '连接中...',
@@ -235,7 +228,7 @@ export default function Sidebar({
           envId: env.id,
           agentId: agentId || null,
           projectId: project?.id || null,
-          workingDir: projectPath,
+          workingDir: project?.path || null,
         }
       })
       onSessionStatusChange?.(sessionId, 'connected')
@@ -268,10 +261,9 @@ export default function Sidebar({
   }
 
   // 创建 WSL 会话（带 Agent 和可选项目）
-  const createWslSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
+  const createWslSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
     const sessionId = `wsl-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
-    const project = resolveProjectRecord(env.id, projectId, projectPath)
 
     onAddSession({
       id: sessionId,
@@ -279,8 +271,9 @@ export default function Sidebar({
       type: 'wsl',
       envId: env.id,
       agentId: agentId || undefined,
-      projectId,
-      projectPath,
+      projectId: project?.id,
+      projectName: project?.name,
+      projectPath: project?.path,
       status: 'connecting',
       mode: agent?.needsProject === false ? 'chat' : 'terminal',
       statusText: '连接中...',
@@ -293,13 +286,13 @@ export default function Sidebar({
         envId: env.id,
         cols,
         rows,
-        workingDir: projectPath || null,
+        workingDir: project?.path || null,
         sessionInfo: {
           name: env.name,
           envId: env.id,
           agentId: agentId || null,
           projectId: project?.id || null,
-          workingDir: projectPath,
+          workingDir: project?.path || null,
         }
       })
       onSessionStatusChange?.(sessionId, 'connected')
@@ -330,18 +323,18 @@ export default function Sidebar({
   }
 
   // 创建会话的主入口
-  const createSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
+  const createSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
     if (env.type === 'local') {
-      await createLocalSessionWithAgent(env, agentId, projectId, projectPath)
+      await createLocalSessionWithAgent(env, agentId, project)
     } else if (env.type === 'wsl') {
-      await createWslSessionWithAgent(env, agentId, projectId, projectPath)
+      await createWslSessionWithAgent(env, agentId, project)
     } else if (env.auth_type === 'password') {
       // 需要密码，先保存选择，显示密码输入
       setShowPasswordPrompt(env.id)
       // 保存待创建的会话信息
-      sessionStorage.setItem('pending_session', JSON.stringify({ envId: env.id, agentId, projectId, projectPath }))
+      sessionStorage.setItem('pending_session', JSON.stringify({ envId: env.id, agentId, project }))
     } else {
-      await createSshSessionWithAgent(env, agentId, projectId, projectPath, null)
+      await createSshSessionWithAgent(env, agentId, project, null)
     }
   }
 
@@ -388,7 +381,7 @@ export default function Sidebar({
                      (env.host?.toLowerCase().includes(query))
     const envSessions = sessionsByEnv[env.id] || []
     const sessionMatch = envSessions.some(s =>
-      s.projectId?.toLowerCase().includes(query) ||
+      s.projectName?.toLowerCase().includes(query) ||
       s.lastMsg?.toLowerCase().includes(query) ||
       AGENTS.find(a => a.id === s.agentId)?.name.toLowerCase().includes(query)
     )
@@ -471,8 +464,8 @@ export default function Sidebar({
             const projectGroups: Record<string, Session[]> = {}
             const standalone: Session[] = []
             envSessions.forEach(s => {
-              if (s.projectId && s.projectPath) {
-                const key = `${env.id}:${s.projectPath}`
+              if (hasProjectContext(s) && s.projectPath) {
+                const key = s.projectId ? `${env.id}:${s.projectId}` : `${env.id}:${s.projectPath}`
                 if (!projectGroups[key]) projectGroups[key] = []
                 projectGroups[key].push(s)
               } else {
@@ -583,7 +576,7 @@ export default function Sidebar({
                           >
                             <span className="text-[11px] text-[#4e5270]">📁</span>
                             <div className="flex-1 min-w-0">
-                              <div className="text-[12px] font-medium font-mono truncate">{s.projectId}</div>
+                              <div className="text-[12px] font-medium font-mono truncate">{s.projectName || s.name}</div>
                               <div className="flex items-center gap-1 mt-0.5">
                                 <span className="text-[10px] font-medium" style={{ color: agent?.color || '#4e5270' }}>
                                   {agent?.short || 'Agent'}
@@ -631,7 +624,7 @@ export default function Sidebar({
                             <span className="text-[11px] text-[#4e5270]">📁</span>
                             <div className="flex-1 min-w-0">
                               <div className="text-[12px] font-medium font-mono truncate">
-                                {projSessions[0]?.projectId}
+                                {projSessions[0]?.projectName || projSessions[0]?.name}
                               </div>
                               <div className="text-[10px] text-[#4e5270] truncate">
                                 {projSessions[0]?.projectPath}
@@ -860,12 +853,12 @@ export default function Sidebar({
           envs={envs}
           projects={projects}
           onClose={() => setShowNewSession(false)}
-          onCreateSession={(env, agentId, projectId, projectPath) => {
-            createSessionWithAgent(env, agentId, projectId, projectPath)
+          onCreateSession={(env, agentId, project) => {
+            createSessionWithAgent(env, agentId, project)
             setShowNewSession(false)
           }}
-          onCreateSshSession={(env, agentId, projectId, projectPath, password) => {
-            createSshSessionWithAgent(env, agentId, projectId, projectPath, password)
+          onCreateSshSession={(env, agentId, project, password) => {
+            createSshSessionWithAgent(env, agentId, project, password)
             setShowNewSession(false)
           }}
         />
@@ -886,8 +879,8 @@ export default function Sidebar({
             const env = envs.find(e => e.id === showPasswordPrompt)
             const pending = sessionStorage.getItem('pending_session')
             if (env && pending) {
-              const { agentId, projectId, projectPath } = JSON.parse(pending)
-              createSshSessionWithAgent(env, agentId, projectId, projectPath, password)
+              const { agentId, project } = JSON.parse(pending)
+              createSshSessionWithAgent(env, agentId, project, password)
               sessionStorage.removeItem('pending_session')
             }
           }}
@@ -939,7 +932,7 @@ export default function Sidebar({
 
 // Session badge component
 function SessionBadge({ s }: { s: Session }) {
-  const isTerm = !s.projectId && !s.agentId
+  const isTerm = !hasProjectContext(s) && !s.agentId
   const label = isTerm ? 'PTY' : (s.mode === 'chat' ? 'ACP' : 'PTY')
   const color = isTerm ? '#FBBF24' : (s.mode === 'chat' ? '#4ADE80' : '#60A5FA')
   const background = isTerm ? 'rgba(251, 191, 36, 0.08)' : (s.mode === 'chat' ? 'rgba(74, 222, 128, 0.08)' : 'rgba(96, 165, 250, 0.08)')
@@ -1183,8 +1176,8 @@ function NewSessionModal({
   envs: Env[]
   projects: Project[]
   onClose: () => void
-  onCreateSession: (env: Env, agentId: string, projectId?: string, projectPath?: string) => void
-  onCreateSshSession: (env: Env, agentId: string, projectId?: string, projectPath?: string, password?: string) => void
+  onCreateSession: (env: Env, agentId: string | null, project?: Project) => void
+  onCreateSshSession: (env: Env, agentId: string | null, project?: Project, password?: string) => void
 }) {
   const [step, setStep] = useState<'intent' | 'project' | 'agent' | 'env'>('intent')
   const [intent, setIntent] = useState<'project' | 'chat' | 'terminal' | null>(null)
@@ -1313,15 +1306,15 @@ function NewSessionModal({
     if (intent === 'terminal') {
       // Pure terminal session - requires selectedEnv
       if (!selectedEnv) return
-      onCreateSession(selectedEnv, null as any, undefined, undefined)
+      onCreateSession(selectedEnv, null)
     } else if (intent === 'chat' && selectedAgent) {
       // AI chat - use selected env or fallback to local env
       const env = selectedEnv || envs.find(e => e.type === 'local')
       if (!env) return
-      onCreateSession(env, selectedAgent, undefined, undefined)
+      onCreateSession(env, selectedAgent)
     } else if (intent === 'project' && selectedAgent) {
       if (!selectedEnv) return
-      onCreateSession(selectedEnv, selectedAgent, selectedProject?.name, selectedProject?.path)
+      onCreateSession(selectedEnv, selectedAgent, selectedProject || undefined)
     }
   }
 

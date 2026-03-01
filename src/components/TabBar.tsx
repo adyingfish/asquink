@@ -15,7 +15,9 @@ interface TabBarProps {
   onCloseSession: (id: string) => void
 }
 
-const isPureTerminalSession = (session: Session) => !session.projectId && !session.agentId
+const hasProjectContext = (session: Session) => Boolean(session.projectId || session.projectName || session.projectPath)
+
+const isPureTerminalSession = (session: Session) => !hasProjectContext(session) && !session.agentId
 
 const getSessionTypeLabel = (session: Session) => {
   if (isPureTerminalSession(session)) return 'PTY'
@@ -57,9 +59,9 @@ export default function TabBar({ sessions, activeSessionId, onSelectSession, onC
   const getTabTitle = (session: Session) => {
     const agent = AGENTS.find(item => item.id === session.agentId)
 
-    if (session.projectId) {
+    if (hasProjectContext(session)) {
       return {
-        primary: session.projectId,
+        primary: session.projectName || session.name,
         secondary: agent?.short || session.name,
         agent,
       }

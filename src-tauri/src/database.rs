@@ -41,6 +41,7 @@ pub struct SessionRecord {
     pub env_type: String,
     pub agent_id: Option<String>,
     pub project_id: Option<String>,
+    pub project_name: Option<String>,
     pub project_path: Option<String>,
     pub working_dir: Option<String>,
     pub started_at: Option<String>,
@@ -756,7 +757,8 @@ impl Database {
                     END
                 ) AS env_type,
                 s.agent_id,
-                COALESCE(p.name, s.project_id) AS project_id,
+                p.id AS project_id,
+                COALESCE(p.name, s.project_id) AS project_name,
                 COALESCE(p.path, s.working_dir) AS project_path,
                 s.working_dir,
                 s.started_at,

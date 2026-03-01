@@ -63,8 +63,10 @@ const getStatusTone = (status: Session['status']) => {
   }
 }
 
+const hasProjectContext = (session: Session) => Boolean(session.projectId || session.projectName || session.projectPath)
+
 const getSessionModeMeta = (session: Session) => {
-  if (!session.projectId && !session.agentId) {
+  if (!hasProjectContext(session) && !session.agentId) {
     return {
       label: 'PTY Terminal',
       icon: Monitor,
@@ -221,7 +223,7 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="text-[13px] font-semibold text-[#f5f7fb] truncate">
-                {activeSession.projectId || activeSession.name}
+                {activeSession.projectName || activeSession.name}
               </span>
               <span
                 className="h-5 px-2 rounded-md border flex items-center gap-1 text-[9px] font-semibold tracking-[0.08em] flex-shrink-0"

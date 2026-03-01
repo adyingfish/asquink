@@ -22,7 +22,8 @@ export interface Session {
   name: string
   type: 'local' | 'ssh' | 'wsl'
   envId?: string          // Associated environment ID
-  projectId?: string      // Project name if project-based session
+  projectId?: string      // Associated project ID
+  projectName?: string    // Project display name
   projectPath?: string    // Project directory path
   agentId?: string        // Associated Agent
   status: 'connecting' | 'connected' | 'disconnected'
@@ -43,6 +44,7 @@ export interface SessionRecord {
   env_type: string
   agent_id: string | null
   project_id: string | null
+  project_name: string | null
   project_path: string | null
   working_dir: string | null
   started_at: string | null
@@ -105,6 +107,7 @@ function App() {
         envId: r.env_id || undefined,
         agentId: r.agent_id || undefined,
         projectId: r.project_id || undefined,
+        projectName: r.project_name || undefined,
         projectPath: r.project_path || undefined,
         status: 'disconnected',
         mode: 'terminal',
