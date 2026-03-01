@@ -1,199 +1,222 @@
 # ASquink 开发路线图
 
-**当前状态：Phase 3 已完成** ✅
-**下一目标：Phase 4 - 视图模式切换**
+**当前状态**: Phase 4 进行中
+**当前重点**: ACP Agent 半真实接入、项目型 Agent 视图约束、ACP 管理页收口
+**最后更新**: 2026-03-01
 
 ---
 
 ## 项目概览
 
-ASquink 是一个多 Agent 终端管理器，支持本地终端和 SSH 远程连接，集成多个 AI Agent（Claude Code、Codex、Gemini CLI、OpenCode、OpenClaw）。
+ASquink 是一个多 Agent 终端与对话管理器，支持本地终端、WSL、SSH 环境，以及多种本地 CLI Agent / ACP Agent 的统一会话管理。
 
 ### 技术栈
-- **前端**: Tauri v2 + React + TypeScript + Tailwind CSS
-- **后端**: Rust + SQLite + russh + portable-pty
-- **终端**: xterm.js
+- 前端: Tauri v2 + React + TypeScript + Tailwind CSS
+- 后端: Rust + SQLite
+- 终端: xterm.js + portable-pty
+- 远程连接: russh
 
 ---
 
-## Phase 1：基础架构 ✅ 已完成
+## 当前开发结论
 
-### 1.1 项目初始化 ✅
-- [x] Tauri v2 + React + TypeScript 项目结构
+### 已完成
+- 环境模型已从 `servers` 统一到 `envs`
+- 多 Tab 会话管理、历史恢复、项目型会话已经稳定可用
+- 本地终端、SSH、WSL 三类环境都已接入
+- 项目型 CLI Agent 已支持自动启动和会话恢复
+- `ACP Agent` 已接入新建会话流程，可在“在项目中编码”中选择
+- `ACP Agent` 会话已限制为仅对话视图，不支持终端和分屏
+- ACP 管理页已从纯 mock 演示升级为“半真实版”
+- Windows 下 CLI Agent 版本探测已增强，`claude/codex/gemini/opencode` 版本显示更稳定
+
+### 当前边界
+- ACP 会话目前仍是 chat-only UI，不是完整 ACP 协议通信
+- ACP 管理页当前的“connected”表示检测到本地相关进程，不代表已完成 ACP 握手
+- ACP endpoint、模型列表、连接控制、配置同步仍未接入真实后端
+- `EnvManagePage.tsx` 里仍有少量旧 mock 结构残留，虽然不影响当前功能
+
+### 当前建议的下一步
+1. 把 ACP 会话从 chat 占位视图升级为真实 ACP 消息收发
+2. 把 ACP 管理页的连接状态从“进程检测”升级为“握手状态”
+3. 清理 ACP 管理页中残留的 mock 数据结构与未使用组件
+
+---
+
+## Phase 1: 基础架构
+
+### 1.1 项目初始化
+- [x] Tauri v2 + React + TypeScript 基础工程
 - [x] Tailwind CSS + Vite 配置
-- [x] xterm.js 终端组件集成
-- [x] 暗色主题 UI
+- [x] xterm.js 集成
+- [x] 深色主题基础 UI
 
-### 1.2 后端架构 ✅
-- [x] `session.rs` - TerminalSession trait 抽象层
-- [x] `ssh.rs` - SSH 连接实现（russh，支持密码/私钥认证）
-- [x] `pty.rs` - 本地 PTY 实现（portable-pty）
-- [x] `database.rs` - SQLite 数据持久化
+### 1.2 后端基础能力
+- [x] 本地 PTY 会话管理
+- [x] SSH 会话管理
+- [x] SQLite 持久化
+- [x] Tauri IPC 基础命令
 
-### 1.3 Tauri IPC 层 ✅
-- [x] `list_servers` / `create_server` / `delete_server`
-- [x] `create_local_session` / `create_ssh_session`
-- [x] `write_to_session` / `resize_session` / `close_session`
-- [x] Events: `terminal-data-{id}`, `terminal-closed-{id}`
-
-### 1.4 前端组件 ✅
-- [x] Sidebar - 服务器列表 + SSH 连接入口
-- [x] TerminalPanel - xterm.js 集成
-- [x] 密码认证弹窗
-- [x] 终端输入输出实时同步
-
-### 1.5 数据模型 ✅
-- [x] `servers` 表 - 服务器配置
-- [x] `agents` 表 - Agent 预设
-- [x] `sessions` 表 - 会话历史
+### 1.3 数据模型
+- [x] `envs`
+- [x] `projects`
+- [x] `agents`
+- [x] `sessions`
+- [ ] `messages`
 
 ---
 
-## Phase 2：Claude Code 对接 ✅ 已完成
+## Phase 2: CLI Agent 接入
 
-### 2.1 API Key 管理 ✅
-- [x] 系统 Keychain 集成（keyring crate）
-- [x] API Key 存储界面（设置页）
-- [x] API Key 读取和注入
+### 2.1 Agent 检测与启动
+- [x] 本地 Agent 扫描
+- [x] 已安装状态显示
+- [x] 版本号探测
+- [x] 项目型 Agent 自动启动
 
-### 2.2 Claude Code 启动 ✅
-- [x] 检测 Claude 安装状态
-- [x] 未安装时显示安装指引
-- [x] 启动时注入 ANTHROPIC_API_KEY 环境变量
-- [x] "启动 Claude" 按钮 UI
+### 2.2 已接入 Agent
+- [x] Claude Code
+- [x] Codex
+- [x] Gemini CLI
+- [x] OpenCode
+- [x] OpenClaw
 
-### 2.3 会话基础管理 ✅
-- [x] 会话状态实时显示（连接中/已连接/已断开）
-- [x] 关闭会话功能
-- [x] 基本的错误提示
-
----
-
-## Phase 3：环境抽象与多 Tab ✅ 已完成
-
-### 3.1 环境模型重构 ✅
-- [x] 数据库迁移：`servers` 表 → `envs` 表，新增 `type` 字段
-- [x] 统一环境列表 UI（本地终端 + SSH 服务器 + WSL）
-- [x] 环境在线状态检测
-- [x] 快速连接入口
-- [x] 环境管理页面
-
-### 3.2 多 Tab 会话管理 ✅
-- [x] SessionManager 统一管理活跃会话
-- [x] Tab 栏组件：创建/切换/关闭 Tab
-- [x] Tab 标题规则：`<env_name>` 或 `<project_name> › <agent>`
-- [x] 会话状态同步
-- [x] 关闭会话时清理资源
-- [x] 历史会话重连功能
-
-### 3.3 项目型 Agent 支持 ✅
-- [x] `projects` 表：path + name + env_id
-- [x] 项目注册 UI（新建会话时自动创建）
-- [x] 项目列表展示（侧边栏）
-- [x] 从项目启动 Agent：自动 cd 到项目目录
-- [x] Agent 类型区分（项目型 vs 独立型）
-- [x] 会话重连时自动启动 Agent
-
-### 3.4 WSL 支持 ✅
-- [x] WSL 环境检测和管理
-- [x] WSL 分发版列表
-- [x] WSL 会话创建
-- [x] WSL 环境内 Agent 扫描
-
-### 3.5 UI 优化 ✅
-- [x] 新建会话弹窗（三意图选择：项目编码/AI对话/纯终端）
-- [x] 测试连接功能
-- [x] 会话列表高度修复
-- [x] 环境排序（本地终端永远在最上）
-- [x] 环境管理页面与终端面板切换交互
-- [x] PowerShell 换行符兼容性修复
-
-### 3.6 支持的 Agent
-| Agent | 名称 | 类型 | 颜色 |
-|-------|------|------|------|
-| claude | Claude Code | 项目型 | 🟠 #E8915A |
-| codex | Codex | 项目型 | 🟢 #4ADE80 |
-| gemini | Gemini CLI | 项目型 | 🔵 #60A5FA |
-| opencode | OpenCode | 项目型 | 🩷 #F472B6 |
-| openclaw | OpenClaw | 独立型 | 🟣 #C084FC |
+### 2.3 Windows 兼容性
+- [x] PowerShell 换行兼容修复
+- [x] `--version` 直接探测
+- [x] Windows 下 `cmd /c` 兜底探测
+- [x] npm 全局包 `package.json` 版本兜底
 
 ---
 
-## Phase 4：视图模式切换 🔜 下一步
+## Phase 3: 环境抽象与多会话管理
 
-**目标：** 项目型 Agent 支持终端/对话双视图
+### 3.1 环境层
+- [x] `servers -> envs` 迁移
+- [x] Local / WSL / SSH 统一环境列表
+- [x] 环境状态检测
+- [x] 环境管理页
 
-### 4.1 视图模式切换
-- [ ] 4.1.1 顶部视图切换：[⌨ 终端] [💬 对话] [◧ 分屏]
-- [ ] 4.1.2 视图约束：项目型 Agent 支持三种，独立型仅对话
-- [ ] 4.1.3 对话视图组件：消息流（user/agent 区分）+ thinking 状态
-- [ ] 4.1.4 消息存储：`messages` 表（session_id, role, text, parts, thinking）
+### 3.2 会话层
+- [x] 多 Tab 会话管理
+- [x] 会话关闭与资源清理
+- [x] 历史会话恢复
+- [x] 项目型会话标题规则
 
-**验收标准：**
-- Claude Code 支持终端/对话/分屏切换
-- 对话消息能显示 thinking 状态
+### 3.3 项目型 Agent
+- [x] 项目注册与关联环境
+- [x] 新建会话时按项目启动 Agent
+- [x] 会话恢复时按 Agent 类型决定是否自动启动
+- [x] Agent 元信息统一到 `src/utils/agents.ts`
 
 ---
 
-## Phase 5：稳定性与打包
+## Phase 4: 视图模式与 ACP Agent
 
-**目标：** 生产可用，跨平台打包
+**状态**: 进行中
+
+### 4.1 视图模式
+- [x] 会话层支持 `terminal` / `chat` 模式区分
+- [x] 普通项目型 CLI Agent 默认走终端模式
+- [x] `ACP Agent` 默认走聊天模式
+- [x] `ACP Agent` 不支持终端 / 分屏切换
+- [ ] 通用消息存储模型 `messages`
+- [ ] 完整聊天消息流渲染
+
+### 4.2 ACP Agent 接入
+- [x] `ACP Agent` 已加入统一 Agent 注册表
+- [x] 新建会话时可选择 `ACP Agent`
+- [x] 历史会话恢复时识别 `ACP Agent`
+- [x] 顶部标签与主视图区分 `ACP Agent`
+- [x] 数据库内置 `acp` Agent 记录
+- [ ] 真实 ACP 协议握手
+- [ ] ACP 会话消息收发
+- [ ] 项目上下文透传到 ACP 会话
+
+### 4.3 ACP 管理页
+- [x] 固定展示 4 个 ACP Agent 条目
+- [x] 顺序固定为 `Claude Code -> Codex -> Gemini CLI -> OpenCode`
+- [x] 检测完成后按“已连接在上，未连接在下”排序
+- [x] 初始化时不再空白，先显示骨架条目
+- [x] 图标统一为 `Bot`
+- [x] 颜色与“此环境中的 Agent”区域统一
+- [x] 检测提示放在 ACP Agent 列表底部
+- [x] 接入后端 `list_acp_agents`
+- [x] 显示真实安装状态和版本号
+- [x] 不再展示 PID 和关联会话数
+- [ ] 去掉页面中残留的旧 mock 结构
+- [ ] 连接/断开按钮接真实行为
+- [ ] 显示真实 endpoint / handshake / model metadata
+
+### 4.4 ACP 状态定义
+- [x] `not_installed`: 本机未安装对应 CLI
+- [x] `disconnected`: 已安装，但未检测到相关运行进程
+- [x] `connected`: 已安装，且检测到本地相关运行进程
+- [ ] `connected` 切换为真实 ACP 握手状态
+
+---
+
+## Phase 5: 稳定性与发布
 
 ### 5.1 稳定性
-- [ ] 5.1.1 SSH 断线检测 + 自动重连
-- [ ] 5.1.2 终端自适应窗口大小（resize 实时同步）
-- [ ] 5.1.3 会话持久化：重启后恢复未关闭的会话
+- [ ] SSH 断线检测与自动重连
+- [ ] 会话异常恢复
+- [ ] 更完整的错误提示与诊断
+- [ ] 环境 / Agent 扫描的超时与重试策略
 
-### 5.2 打包发布
-- [ ] 5.2.1 应用图标 + 窗口控制（最小化到托盘）
-- [ ] 5.2.2 Linux AppImage 打包
-- [ ] 5.2.3 README + 使用文档
-
-**验收标准：**
-- SSH 断网后自动重连
-- 打包后双击可用
+### 5.2 发布准备
+- [ ] 应用图标与窗口控制细化
+- [ ] 构建产物整理
+- [ ] README 与使用文档更新
+- [ ] 安装与排障说明
 
 ---
 
-## 数据模型
+## 当前 Agent 矩阵
+
+| Agent | 类型 | 启动方式 | 默认模式 | 当前状态 |
+|------|------|------|------|------|
+| Claude Code | 项目型 | CLI | terminal | 已接入 |
+| Codex | 项目型 | CLI | terminal | 已接入 |
+| Gemini CLI | 项目型 | CLI | terminal | 已接入 |
+| OpenCode | 项目型 | CLI | terminal | 已接入 |
+| ACP Agent | 项目型 | ACP | chat | 半真实接入 |
+| OpenClaw | 独立型 | CLI | chat | 已接入 |
+
+---
+
+## 当前数据模型
 
 | 表名 | 用途 | 关键字段 |
 |------|------|----------|
-| `envs` | 环境配置 | id, name, type(ssh/local/wsl), host, port, username, auth_type |
-| `projects` | 项目配置 | id, name, path, env_id |
-| `agents` | Agent 预设 | id, name, color, needs_project |
-| `sessions` | 会话历史 | id, env_id, agent_id, project_id, working_dir, started_at, ended_at |
-| `messages` | 对话消息 | session_id, role, text, parts, thinking |
+| `envs` | 环境配置 | `id`, `name`, `type`, `host`, `port`, `username` |
+| `projects` | 项目配置 | `id`, `name`, `path`, `env_id` |
+| `agents` | Agent 预设 | `id`, `name`, `command`, `is_builtin` |
+| `sessions` | 会话历史 | `id`, `env_id`, `agent_id`, `project_id`, `working_dir`, `started_at`, `ended_at` |
+| `messages` | 对话消息 | 计划中，尚未正式接入 |
 
 ---
 
-## 开发命令
+## 验证基线
 
-```bash
-# 开发模式
-npm run tauri:dev
-
-# 构建
-npm run tauri:build
-
-# 类型检查
-npx tsc --noEmit
-```
+- [x] `npm.cmd run build`
+- [x] `cargo check`
+- [ ] ACP 真实协议联调
+- [ ] 多平台回归验证
 
 ---
 
-## 已知限制
+## 最近更新
 
-1. **SSH 主机密钥**: 暂自动接受所有密钥（未实现验证）
-2. **PTY 异步**: portable-pty 的读写为阻塞实现
-3. **错误处理**: 部分错误提示需完善
-
----
-
-## 更新日志
-
-- **2026-03-01**: PowerShell 换行符兼容性修复，WSL 支持完善
-- **2025-02-27**: Phase 3 完成，新建会话弹窗重构，添加 OpenCode Agent
-- **2025-02-26**: 环境管理页面完善，测试连接功能
-- **2025-02-25**: 多 Tab 会话管理，项目型 Agent 支持
-- **2025-02-24**: 环境模型重构，servers → envs
+- **2026-03-01**
+  - `ACP Agent` 接入新建会话流程
+  - `ACP Agent` 会话收口为 chat-only
+  - Agent 注册表迁移到 `src/utils/agents.ts`
+  - ACP 管理页改为固定 4 条目 + 半真实检测
+  - 新增后端 `list_acp_agents`
+  - Windows 下 Agent 版本探测增强
+  - ACP 列表 UI 细节调整完成
+- **2025-02-27**
+  - Phase 3 完成，多环境与项目型会话结构稳定
+- **2025-02-24 ~ 2025-02-26**
+  - 环境模型重构、WSL 接入、环境管理页完善
