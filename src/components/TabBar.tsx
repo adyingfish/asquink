@@ -1,12 +1,6 @@
 import { Command, MessageSquareText, Monitor, X } from 'lucide-react'
 import type { Session } from '../App'
-
-const AGENTS = [
-  { id: 'claude', short: 'Claude', color: '#E8915A' },
-  { id: 'codex', short: 'Codex', color: '#4ADE80' },
-  { id: 'gemini', short: 'Gemini', color: '#60A5FA' },
-  { id: 'openclaw', short: 'OClaw', color: '#C084FC' },
-]
+import { getAgentDefinition } from '../agents'
 
 interface TabBarProps {
   sessions: Session[]
@@ -21,6 +15,7 @@ const isPureTerminalSession = (session: Session) => !hasProjectContext(session) 
 
 const getSessionTypeLabel = (session: Session) => {
   if (isPureTerminalSession(session)) return 'PTY'
+  if (session.agentId === 'acp') return 'ACP'
   if (session.mode === 'chat') return 'CHAT'
   return 'AGENT'
 }
@@ -37,6 +32,14 @@ const getSessionTypeTint = (session: Session) => {
       color: '#FBBF24',
       background: 'rgba(251, 191, 36, 0.14)',
       border: 'rgba(251, 191, 36, 0.2)',
+    }
+  }
+
+  if (session.agentId === 'acp') {
+    return {
+      color: '#4ADE80',
+      background: 'rgba(74, 222, 128, 0.14)',
+      border: 'rgba(74, 222, 128, 0.2)',
     }
   }
 
@@ -57,7 +60,7 @@ const getSessionTypeTint = (session: Session) => {
 
 export default function TabBar({ sessions, activeSessionId, onSelectSession, onCloseSession }: TabBarProps) {
   const getTabTitle = (session: Session) => {
-    const agent = AGENTS.find(item => item.id === session.agentId)
+    const agent = getAgentDefinition(session.agentId)
 
     if (hasProjectContext(session)) {
       return {

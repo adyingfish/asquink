@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
+import { AGENTS, CHAT_AGENTS, PROJECT_AGENTS, getAgentDefinition, getAgentSessionMode, shouldAutoLaunchAgent } from '../agents'
 
 interface SidebarProps {
   onAddSession: (session: Session) => void
@@ -34,15 +35,6 @@ interface SidebarProps {
   refreshKey?: number
   getPreferredPtySize: () => { cols: number; rows: number }
 }
-
-// Agent definitions with colors
-const AGENTS = [
-  { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true },
-  { id: 'codex', name: 'Codex', short: 'Codex', color: '#E5E7EB', needsProject: true },
-  { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true },
-  { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#78716C', needsProject: true },
-  { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#EF4444', needsProject: false },
-]
 
 const getProjectNameFromPath = (value: string) => {
   const normalized = value.trim().replace(/[\\/]+$/, '')
@@ -162,7 +154,6 @@ export default function Sidebar({
   // 创建本地会话（带 Agent 和可选项目）
   const createLocalSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
     const id = `local-${Date.now()}`
-    const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
 
     console.log('Creating local session:', { id, envId: env.id, agentId, project })
 
@@ -176,7 +167,7 @@ export default function Sidebar({
       projectName: project?.name,
       projectPath: project?.path,
       status: 'connecting',
-      mode: agent?.needsProject === false ? 'chat' : 'terminal',
+      mode: getAgentSessionMode(agentId),
       statusText: '连接中...',
     })
 
@@ -203,22 +194,19 @@ export default function Sidebar({
       onSessionStatusChange?.(id, 'connected')
 
       // Auto-launch agent if selected
-      if (agentId) {
-        const agentInfo = AGENTS.find(a => a.id === agentId)
-        if (agentInfo) {
-          // Wait a bit for terminal to be ready
-          setTimeout(async () => {
-            try {
-              await invoke('launch_agent', {
-                sessionId: id,
-                sessionType: 'local',
-                agent: agentInfo.id,
-              })
-            } catch (err) {
-              console.error('Failed to launch agent:', err)
-            }
-          }, 500)
-        }
+      if (shouldAutoLaunchAgent(agentId)) {
+        // Wait a bit for terminal to be ready
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId: id,
+              sessionType: 'local',
+              agent: agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent:', err)
+          }
+        }, 500)
       }
     } catch (error) {
       console.error('Failed to create local session:', error)
@@ -230,7 +218,6 @@ export default function Sidebar({
   // 创建 SSH 会话（带 Agent 和可选项目）
   const createSshSessionWithAgent = async (env: Env, agentId: string | null, project?: Project, pwd?: string | null) => {
     const sessionId = `ssh-${Date.now()}`
-    const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
 
     onAddSession({
       id: sessionId,
@@ -242,7 +229,7 @@ export default function Sidebar({
       projectName: project?.name,
       projectPath: project?.path,
       status: 'connecting',
-      mode: agent?.needsProject === false ? 'chat' : 'terminal',
+      mode: getAgentSessionMode(agentId),
       statusText: '连接中...',
     })
 
@@ -269,22 +256,19 @@ export default function Sidebar({
       setPassword('')
 
       // Auto-launch agent if selected
-      if (agentId) {
-        const agentInfo = AGENTS.find(a => a.id === agentId)
-        if (agentInfo) {
-          // Wait a bit for terminal to be ready
-          setTimeout(async () => {
-            try {
-              await invoke('launch_agent', {
-                sessionId,
-                sessionType: 'ssh',
-                agent: agentInfo.id,
-              })
-            } catch (err) {
-              console.error('Failed to launch agent:', err)
-            }
-          }, 500)
-        }
+      if (shouldAutoLaunchAgent(agentId)) {
+        // Wait a bit for terminal to be ready
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId,
+              sessionType: 'ssh',
+              agent: agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent:', err)
+          }
+        }, 500)
       }
     } catch (error: any) {
       console.error('Failed to create SSH session:', error)
@@ -296,7 +280,6 @@ export default function Sidebar({
   // 创建 WSL 会话（带 Agent 和可选项目）
   const createWslSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
     const sessionId = `wsl-${Date.now()}`
-    const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
 
     onAddSession({
       id: sessionId,
@@ -308,7 +291,7 @@ export default function Sidebar({
       projectName: project?.name,
       projectPath: project?.path,
       status: 'connecting',
-      mode: agent?.needsProject === false ? 'chat' : 'terminal',
+      mode: getAgentSessionMode(agentId),
       statusText: '连接中...',
     })
 
@@ -331,22 +314,19 @@ export default function Sidebar({
       onSessionStatusChange?.(sessionId, 'connected')
 
       // Auto-launch agent if selected
-      if (agentId) {
-        const agentInfo = AGENTS.find(a => a.id === agentId)
-        if (agentInfo) {
-          // Wait a bit for terminal to be ready
-          setTimeout(async () => {
-            try {
-              await invoke('launch_agent', {
-                sessionId,
-                sessionType: 'wsl',
-                agent: agentInfo.id,
-              })
-            } catch (err) {
-              console.error('Failed to launch agent:', err)
-            }
-          }, 500)
-        }
+      if (shouldAutoLaunchAgent(agentId)) {
+        // Wait a bit for terminal to be ready
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId,
+              sessionType: 'wsl',
+              agent: agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent:', err)
+          }
+        }, 500)
       }
     } catch (error: any) {
       console.error('Failed to create WSL session:', error)
@@ -973,9 +953,12 @@ export default function Sidebar({
 // Session badge component
 function SessionBadge({ s }: { s: Session }) {
   const isTerm = !hasProjectContext(s) && !s.agentId
-  const label = isTerm ? 'PTY' : (s.mode === 'chat' ? 'ACP' : 'PTY')
-  const color = isTerm ? '#FBBF24' : (s.mode === 'chat' ? '#4ADE80' : '#60A5FA')
-  const background = isTerm ? 'rgba(251, 191, 36, 0.08)' : (s.mode === 'chat' ? 'rgba(74, 222, 128, 0.08)' : 'rgba(96, 165, 250, 0.08)')
+  const isAcp = s.agentId === 'acp'
+  const label = isTerm ? 'PTY' : (isAcp ? 'ACP' : (s.mode === 'chat' ? 'CHAT' : 'AGENT'))
+  const color = isTerm ? '#FBBF24' : (isAcp ? '#4ADE80' : (s.mode === 'chat' ? '#C084FC' : '#60A5FA'))
+  const background = isTerm
+    ? 'rgba(251, 191, 36, 0.08)'
+    : (isAcp ? 'rgba(74, 222, 128, 0.08)' : (s.mode === 'chat' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(96, 165, 250, 0.08)'))
 
   return (
     <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 min-h-[34px]">
@@ -1234,10 +1217,6 @@ function NewSessionModal({
   const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
   const [scanningAgents, setScanningAgents] = useState(false)
 
-  // Agent definitions
-  const PROJECT_AGENTS = AGENTS.filter(a => a.needsProject)
-  const CHAT_AGENTS = AGENTS.filter(a => !a.needsProject)
-
   const scanAgents = async () => {
     // Only scan for local environment for now
     // For SSH/WSL, we need a connected session to scan
@@ -1371,7 +1350,7 @@ function NewSessionModal({
     if (selectedEnv) parts.push(selectedEnv.name)
     if (selectedProject) parts.push(selectedProject.name)
     if (selectedAgent) {
-      const agent = AGENTS.find(a => a.id === selectedAgent)
+      const agent = getAgentDefinition(selectedAgent)
       if (agent) parts.push(agent.name)
     }
     if (intent === 'terminal') parts.push('纯终端')
@@ -1441,8 +1420,8 @@ function NewSessionModal({
             {selectedAgent && (
               <>
                 <span>›</span>
-                <span style={{ color: AGENTS.find(a => a.id === selectedAgent)?.color }}>
-                  {AGENTS.find(a => a.id === selectedAgent)?.name}
+                <span style={{ color: getAgentDefinition(selectedAgent)?.color }}>
+                  {getAgentDefinition(selectedAgent)?.name}
                 </span>
               </>
             )}

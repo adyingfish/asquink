@@ -16,6 +16,7 @@ const AGENT_META = {
   codex: { label: 'Codex', color: '#E5E7EB' },
   gemini: { label: 'Gemini CLI', color: '#60A5FA' },
   opencode: { label: 'OpenCode', color: '#78716C' },
+  acp: { label: 'ACP Agent', color: '#4ADE80' },
   openclaw: { label: 'OpenClaw', color: '#EF4444' },
 } as const
 
@@ -78,11 +79,11 @@ const getSessionModeMeta = (session: Session) => {
 
   if (session.mode === 'chat') {
     return {
-      label: 'Chat Agent',
+      label: session.agentId === 'acp' ? 'ACP Agent' : 'Chat Agent',
       icon: MessageSquareText,
-      color: '#C084FC',
-      background: 'rgba(192, 132, 252, 0.12)',
-      border: 'rgba(192, 132, 252, 0.2)',
+      color: session.agentId === 'acp' ? '#4ADE80' : '#C084FC',
+      background: session.agentId === 'acp' ? 'rgba(74, 222, 128, 0.12)' : 'rgba(192, 132, 252, 0.12)',
+      border: session.agentId === 'acp' ? 'rgba(74, 222, 128, 0.2)' : 'rgba(192, 132, 252, 0.2)',
     }
   }
 
@@ -198,6 +199,29 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
   }, [controller, viewMode])
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
+  const availableViews = activeSession?.mode === 'chat'
+    ? [{ id: 'chat' as const, icon: MessageSquareText, label: '对话' }]
+    : [
+        { id: 'terminal' as const, icon: Monitor, label: '终端' },
+        { id: 'split' as const, icon: Command, label: '分屏' },
+        { id: 'chat' as const, icon: MessageSquareText, label: '对话' },
+      ]
+
+  useEffect(() => {
+    if (!activeSession) {
+      setViewMode('terminal')
+      return
+    }
+
+    setViewMode((current) => {
+      if (activeSession.mode === 'chat') {
+        return 'chat'
+      }
+
+      return current === 'chat' ? 'terminal' : current
+    })
+  }, [activeSessionId, activeSession?.mode])
+
   const agentMeta = getAgentMeta(activeSession)
   const statusTone = activeSession ? getStatusTone(activeSession.status) : null
   const sessionModeMeta = activeSession ? getSessionModeMeta(activeSession) : null
@@ -249,11 +273,7 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
           </div>
 
           <div className="flex gap-[2px] p-[2px] rounded-md shrink-0" style={{ background: C.bg0, border: `1px solid ${C.bds}` }}>
-            {[
-              { id: 'terminal' as const, icon: Monitor, label: '终端' },
-              { id: 'split' as const, icon: Command, label: '分屏' },
-              { id: 'chat' as const, icon: MessageSquareText, label: '对话' },
-            ].map((view) => {
+            {availableViews.map((view) => {
               const active = viewMode === view.id
               const Icon = view.icon
               return (

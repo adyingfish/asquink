@@ -457,6 +457,7 @@ impl Database {
             ("codex", "Codex", "codex", "[]", "[]", "which codex", "npm install -g @openai/codex", "codex"),
             ("gemini", "Gemini CLI", "gemini", "[]", r#"["GEMINI_API_KEY"]"#, "which gemini", "npm install -g @anthropic/gemini-cli", "gemini"),
             ("opencode", "OpenCode", "opencode", "[]", "[]", "which opencode", "npm install -g opencode", "opencode"),
+            ("acp", "ACP Agent", "acp-agent", "[]", "[]", "", "", "acp"),
             ("openclaw", "OpenClaw", "openclaw", "[]", "[]", "which openclaw", "npm install -g openclaw", "openclaw"),
         ];
 

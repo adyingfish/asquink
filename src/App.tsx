@@ -4,10 +4,8 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TerminalView from './components/TerminalView'
 import EnvManagePage from './components/EnvManagePage'
+import { getAgentSessionMode, shouldAutoLaunchAgent } from './agents'
 import { TerminalController } from './utils/terminalController'
-
-// Agent IDs for auto-launch
-const AGENT_IDS = ['claude', 'codex', 'gemini', 'opencode', 'openclaw']
 
 export interface AgentInfo {
   id: string
@@ -110,7 +108,7 @@ function App() {
         projectName: r.project_name || undefined,
         projectPath: r.project_path || undefined,
         status: 'disconnected',
-        mode: 'terminal',
+        mode: getAgentSessionMode(r.agent_id),
         startedAt: r.started_at || undefined,
         endedAt: r.ended_at || undefined,
         isReconnect: true,
@@ -249,7 +247,7 @@ function App() {
       ))
 
       // Auto-launch agent if session has an agent
-      if (oldSession.agentId && AGENT_IDS.includes(oldSession.agentId)) {
+      if (shouldAutoLaunchAgent(oldSession.agentId)) {
         setTimeout(async () => {
           try {
             await invoke('launch_agent', {
