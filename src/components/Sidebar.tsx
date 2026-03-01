@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Search, Trash2, MoreHorizontal } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
 
 interface SidebarProps {
@@ -60,6 +60,7 @@ export default function Sidebar({
   const [expandedEnvs, setExpandedEnvs] = useState<Set<string>>(new Set())
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
   const [searchQuery, setSearchQuery] = useState('')
+  const [sessionSettingsPanel, setSessionSettingsPanel] = useState<{ sessionId: string | null, x: number, y: number }>({ sessionId: null, x: 0, y: 0 })
 
   // Load environments and projects
   useEffect(() => {
@@ -413,7 +414,10 @@ export default function Sidebar({
   const activeSessionCount = sessions.filter(session => session.status !== 'disconnected').length
 
   return (
-    <div className="w-[260px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0">
+    <div
+      className="w-[260px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0 relative"
+      onClick={() => setSessionSettingsPanel({ sessionId: null, x: 0, y: 0 })}
+    >
       <div className="px-3.5 py-3 border-b border-[#1d2030]">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#E8915A] to-[#D46A28] shadow-[0_8px_24px_rgba(232,145,90,0.24)] flex items-center justify-center text-white text-sm font-semibold">
@@ -556,6 +560,14 @@ export default function Sidebar({
                           <div
                             key={pk}
                             onClick={() => !isDisconnected && onSelectSession(s.id)}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setSessionSettingsPanel({
+                                sessionId: s.id,
+                                x: e.clientX,
+                                y: e.clientY,
+                              })
+                            }}
                             className="flex items-center gap-1.75 px-2 py-1.5 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
                             style={{
                               background: isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
@@ -582,24 +594,21 @@ export default function Sidebar({
                               </div>
                             </div>
                             <SessionBadge s={s} />
-                            {isDisconnected && (
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
-                                  className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
-                                  aria-label="Reconnect session"
-                                >
-                                  <RefreshCw size={12} />
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
-                                  className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
-                                  aria-label="Delete session"
-                                >
-                                  <Trash2 size={12} />
-                                </button>
-                              </div>
-                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const rect = e.currentTarget.getBoundingClientRect()
+                                setSessionSettingsPanel({
+                                  sessionId: s.id,
+                                  x: rect.right,
+                                  y: rect.bottom,
+                                })
+                              }}
+                              className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#f5f7fb] opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label="Session settings"
+                            >
+                              <MoreHorizontal size={14} />
+                            </button>
                           </div>
                         )
                       }
@@ -654,6 +663,14 @@ export default function Sidebar({
                                   <div
                                     key={s.id}
                                     onClick={() => !isDisconnected && onSelectSession(s.id)}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault()
+                                      setSessionSettingsPanel({
+                                        sessionId: s.id,
+                                        x: e.clientX,
+                                        y: e.clientY,
+                                      })
+                                    }}
                                     className="flex items-center gap-1.75 px-2 py-1.25 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
                                     style={{
                                       background: isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
@@ -678,24 +695,21 @@ export default function Sidebar({
                                       )}
                                     </div>
                                     <SessionBadge s={s} />
-                                    {isDisconnected && (
-                                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
-                                          className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
-                                          aria-label="Reconnect session"
-                                        >
-                                          <RefreshCw size={12} />
-                                        </button>
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
-                                          className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
-                                          aria-label="Delete session"
-                                        >
-                                          <Trash2 size={12} />
-                                        </button>
-                                      </div>
-                                    )}
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        const rect = e.currentTarget.getBoundingClientRect()
+                                        setSessionSettingsPanel({
+                                          sessionId: s.id,
+                                          x: rect.right,
+                                          y: rect.bottom,
+                                        })
+                                      }}
+                                      className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#f5f7fb] opacity-0 group-hover:opacity-100 transition-opacity"
+                                      aria-label="Session settings"
+                                    >
+                                      <MoreHorizontal size={14} />
+                                    </button>
                                   </div>
                                 )
                               })}
@@ -727,6 +741,14 @@ export default function Sidebar({
                         <div
                           key={s.id}
                           onClick={() => !isDisconnected && onSelectSession(s.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            setSessionSettingsPanel({
+                              sessionId: s.id,
+                              x: e.clientX,
+                              y: e.clientY,
+                            })
+                          }}
                           className="flex items-center gap-1.75 px-2 py-1.5 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
                           style={{
                             background: isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
@@ -750,24 +772,21 @@ export default function Sidebar({
                             </div>
                           </div>
                           <SessionBadge s={s} />
-                          {isDisconnected && (
-                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); onReconnectSession(s) }}
-                                className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#4ADE80] text-xs"
-                                aria-label="Reconnect session"
-                              >
-                                <RefreshCw size={12} />
-                              </button>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); onDeleteSession(s.id) }}
-                                className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-red-400 text-xs"
-                                aria-label="Delete session"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setSessionSettingsPanel({
+                                sessionId: s.id,
+                                x: rect.right,
+                                y: rect.bottom,
+                              })
+                            }}
+                            className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#f5f7fb] opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Session settings"
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
                         </div>
                       )
                     })}
@@ -874,6 +893,46 @@ export default function Sidebar({
           }}
         />
       )}
+
+      {/* Session settings panel */}
+      {sessionSettingsPanel.sessionId && (() => {
+        const session = sessions.find(s => s.id === sessionSettingsPanel.sessionId)
+        if (!session) return null
+
+        return (
+          <div
+            className="fixed z-50 bg-[#1e2130] border border-[#2d3346] rounded-lg shadow-xl py-1 min-w-[140px]"
+            style={{
+              left: Math.min(sessionSettingsPanel.x, window.innerWidth - 160),
+              top: Math.min(sessionSettingsPanel.y, window.innerHeight - 100),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {session.status === 'disconnected' && (
+              <button
+                onClick={() => {
+                  onReconnectSession(session)
+                  setSessionSettingsPanel({ sessionId: null, x: 0, y: 0 })
+                }}
+                className="w-full px-3 py-1.5 text-left text-[12px] text-[#e2e4ed] hover:bg-[#2a2e40] flex items-center gap-2"
+              >
+                <RefreshCw size={12} className="text-[#4ADE80]" />
+                重连
+              </button>
+            )}
+            <button
+              onClick={() => {
+                onDeleteSession(session.id)
+                setSessionSettingsPanel({ sessionId: null, x: 0, y: 0 })
+              }}
+              className="w-full px-3 py-1.5 text-left text-[12px] text-[#e2e4ed] hover:bg-[#2a2e40] flex items-center gap-2"
+            >
+              <Trash2 size={12} className="text-red-400" />
+              删除
+            </button>
+          </div>
+        )
+      })()}
     </div>
   )
 }
@@ -899,9 +958,6 @@ function SessionBadge({ s }: { s: Session }) {
       <span className="text-[9px] min-h-[12px]">
         {s.status === 'connected' && s.statusText && (
           <span className="text-[#4ADE80] font-medium">{s.statusText}</span>
-        )}
-        {s.status === 'disconnected' && (
-          <span className="text-[#60A5FA]">已断开</span>
         )}
       </span>
     </div>
