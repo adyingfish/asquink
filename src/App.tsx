@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
-import TerminalPanel from './components/TerminalPanel'
+import TerminalView from './components/TerminalView'
 import EnvManagePage from './components/EnvManagePage'
 import { TerminalController } from './components/terminalController'
 
@@ -303,7 +303,7 @@ function App() {
             onSelectSession={setActiveSessionId}
             onCloseSession={closeSession}
           />
-          <TerminalPanel
+          <TerminalView
             controller={terminalControllerRef.current}
             sessions={sessions}
             activeSessionId={activeSessionId}
