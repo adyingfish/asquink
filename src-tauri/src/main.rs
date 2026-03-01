@@ -110,6 +110,17 @@ pub struct AgentInfo {
     version: Option<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpAgentInfo {
+    id: String,
+    name: String,
+    executable: String,
+    status: String,
+    version: Option<String>,
+    pid: Option<u32>,
+}
+
 fn parse_version_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
     let stdout = String::from_utf8_lossy(stdout).trim().to_string();
     if !stdout.is_empty() {
@@ -198,6 +209,61 @@ async fn detect_agent_version(executable: &str) -> Option<String> {
 
     let package_json = npm_package_json_for_executable(executable)?;
     read_package_version(package_json)
+}
+
+fn get_acp_agent_definitions() -> Vec<(&'static str, &'static str, &'static str)> {
+    vec![
+        ("claude", "Claude Code", "claude"),
+        ("codex", "Codex CLI", "codex"),
+        ("gemini", "Gemini CLI", "gemini"),
+        ("opencode", "OpenCode", "opencode"),
+    ]
+}
+
+#[cfg(target_os = "windows")]
+async fn detect_agent_pid(executable: &str) -> Option<u32> {
+    let patterns = match executable {
+        "claude" => vec!["claude"],
+        "codex" => vec!["@openai/codex", "codex"],
+        "gemini" => vec!["@google/gemini-cli", "gemini-cli"],
+        "opencode" => vec!["opencode-ai", "opencode"],
+        _ => vec![executable],
+    };
+
+    let clauses = patterns
+        .into_iter()
+        .map(|pattern| format!("($_.CommandLine -like '*{}*')", pattern.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(" -or ");
+
+    let script = format!(
+        "$proc = Get-CimInstance Win32_Process | Where-Object {{ $_.CommandLine -and ({}) }} | Select-Object -First 1 -ExpandProperty ProcessId; if ($proc) {{ $proc }}",
+        clauses
+    );
+
+    let output = timeout(
+        Duration::from_secs(3),
+        tokio::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok()
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn detect_agent_pid(_executable: &str) -> Option<u32> {
+    None
 }
 
 // Agent definitions - match frontend AGENTS array
@@ -531,6 +597,41 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
 }
 
 #[tauri::command]
+async fn list_acp_agents() -> Result<Vec<AcpAgentInfo>, String> {
+    let which_cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
+    let mut result = Vec::new();
+
+    for (id, name, executable) in get_acp_agent_definitions() {
+        let output = tokio::process::Command::new(which_cmd)
+            .arg(executable)
+            .output()
+            .await;
+
+        let installed = output.map(|o| o.status.success()).unwrap_or(false);
+        let version = if installed { detect_agent_version(executable).await } else { None };
+        let pid = if installed { detect_agent_pid(executable).await } else { None };
+        let status = if !installed {
+            "not_installed"
+        } else if pid.is_some() {
+            "connected"
+        } else {
+            "disconnected"
+        };
+
+        result.push(AcpAgentInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            executable: executable.to_string(),
+            status: status.to_string(),
+            version,
+            pid,
+        });
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
 async fn scan_agents_for_env(state: State<'_, Arc<Mutex<AppState>>>, env_id: String) -> Result<Vec<AgentInfo>, String> {
     let state = state.lock().await;
     let env = state.db.get_env(&env_id).await.map_err(|e| e.to_string())?;
@@ -841,6 +942,7 @@ fn main() {
             // Agents
             check_agent_installed,
             scan_agents,
+            list_acp_agents,
             scan_agents_for_env,
             launch_agent,
             // Sessions

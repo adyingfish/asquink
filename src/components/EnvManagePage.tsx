@@ -10,8 +10,8 @@ import {
   Laptop,
   Monitor,
   Package,
+  RefreshCw,
   Settings,
-  SquareTerminal,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Env, Project, SessionRecord, AgentInfo } from '../App'
@@ -19,9 +19,9 @@ import type { Env, Project, SessionRecord, AgentInfo } from '../App'
 // Agent definitions with colors - for ACP Agent management
 const AGENT_REGISTRY: Record<string, { name: string; color: string; icon: string; install: string; docs: string }> = {
   claude:   { name: "Claude Code",  color: "#E8915A", icon: "🟠", install: "npm install -g @anthropic-ai/claude-code", docs: "https://docs.anthropic.com/claude-code" },
-  codex:    { name: "Codex CLI",    color: "#4ADE80", icon: "🟢", install: "npm install -g @openai/codex",             docs: "https://github.com/openai/codex" },
+  codex:    { name: "Codex CLI",    color: "#E5E7EB", icon: "🟢", install: "npm install -g @openai/codex",             docs: "https://github.com/openai/codex" },
   gemini:   { name: "Gemini CLI",   color: "#60A5FA", icon: "🔵", install: "npm install -g @google/gemini-cli",        docs: "https://github.com/google/gemini-cli" },
-  opencode: { name: "OpenCode",     color: "#F472B6", icon: "🟣", install: "npm install -g opencode",                  docs: "https://github.com/opencode-ai/opencode" },
+  opencode: { name: "OpenCode",     color: "#78716C", icon: "🟣", install: "npm install -g opencode",                  docs: "https://github.com/opencode-ai/opencode" },
 }
 
 // Agent definitions with colors - for env agent scanning
@@ -36,18 +36,29 @@ const AGENTS = [
 // ACP Agent state type
 interface AcpAgent {
   id: string
+  name?: string
+  executable?: string
   status: 'connected' | 'disconnected' | 'not_installed'
-  endpoint: string
-  protocol: string
-  version: string
+  version?: string | null
   pid: number | null
-  models: string[]
-  activeModel: string | null
-  apiKey: string | null
-  keyStatus: 'valid' | 'missing' | 'invalid'
-  balance: string
-  monthUsage: string
+  endpoint?: string | null
+  protocol?: string | null
+  models?: string[]
+  activeModel?: string | null
+  apiKey?: string | null
+  keyStatus?: 'valid' | 'missing' | 'invalid'
+  balance?: string | null
+  monthUsage?: string | null
 }
+
+const ACP_AGENT_SKELETON: AcpAgent[] = [
+  { id: 'claude', name: 'Claude Code', executable: 'claude', status: 'disconnected', version: null, pid: null },
+  { id: 'codex', name: 'Codex CLI', executable: 'codex', status: 'disconnected', version: null, pid: null },
+  { id: 'gemini', name: 'Gemini CLI', executable: 'gemini', status: 'disconnected', version: null, pid: null },
+  { id: 'opencode', name: 'OpenCode', executable: 'opencode', status: 'disconnected', version: null, pid: null },
+]
+
+const ACP_AGENT_ORDER = ['claude', 'codex', 'gemini', 'opencode'] as const
 
 // Mock ACP Agents data (will be replaced with real data from backend later)
 const MOCK_ACP_AGENTS: AcpAgent[] = [
@@ -56,6 +67,8 @@ const MOCK_ACP_AGENTS: AcpAgent[] = [
   { id: "gemini", status: "disconnected", endpoint: "—", protocol: "ACP/1.2", version: "2.1.0", pid: null, models: ["gemini-2.5-pro"], activeModel: "gemini-2.5-pro", apiKey: null, keyStatus: "missing", balance: "—", monthUsage: "—" },
   { id: "opencode", status: "not_installed", endpoint: "—", protocol: "—", version: "—", pid: null, models: [], activeModel: null, apiKey: null, keyStatus: "missing", balance: "—", monthUsage: "—" },
 ]
+
+void MOCK_ACP_AGENTS
 
 // WSL Distro interface
 interface WslDistro {
@@ -72,9 +85,9 @@ interface EnvManagePageProps {
 
 const AGENT_ICONS: Record<string, LucideIcon> = {
   claude: Bot,
-  codex: SquareTerminal,
+  codex: Bot,
   gemini: Bot,
-  opencode: SquareTerminal,
+  opencode: Bot,
 }
 
 const getEnvIcon = (envType: Env['type']): LucideIcon => {
@@ -236,6 +249,134 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
   )
 }
 
+void AgentDetail
+
+function RealAgentDetail({
+  agent,
+  onRefresh,
+  refreshing,
+}: {
+  agent: AcpAgent
+  onRefresh: () => void
+  refreshing: boolean
+}) {
+  const reg = AGENT_REGISTRY[agent.id]
+  const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
+  const isInstalled = agent.status !== 'not_installed'
+  const [copied, setCopied] = useState(false)
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  return (
+    <div className="flex-1 overflow-y-auto p-7">
+      <div className="flex items-center gap-3.5 mb-6">
+        <div
+          className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+          style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}40` }}
+        >
+          <AgentIcon size={24} style={{ color: reg.color }} />
+        </div>
+        <div className="flex-1">
+          <div className="text-lg font-semibold flex items-center gap-2.5">
+            {reg.name}
+            <Badge status={agent.status} />
+          </div>
+          <div className="text-xs text-[#4e5270] mt-0.5 font-mono">
+            {agent.executable || agent.id}
+            {agent.version && ` · ${agent.version}`}
+          </div>
+        </div>
+        <button
+          onClick={onRefresh}
+          className="px-3.5 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors inline-flex items-center gap-1.5"
+        >
+          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {!isInstalled && (
+        <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-8 text-center">
+          <div className="mb-3.5 flex justify-center">
+            <Package size={32} className="text-[#8b8fa7]" />
+          </div>
+          <div className="text-base font-medium mb-2">{reg.name} not installed</div>
+          <div className="text-xs text-[#4e5270] leading-relaxed max-w-[400px] mx-auto mb-4.5">
+            This panel now uses real local detection. Install the CLI first, then refresh to load actual version and runtime status.
+          </div>
+          <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#08090d] border border-[#1d2030]">
+            <span className="font-mono text-sm text-[#8b8fa7]">$ {reg.install}</span>
+            <span
+              onClick={() => copyToClipboard(reg.install)}
+              className="text-[10px] px-2 py-1 rounded bg-[#1b1f2b] font-medium cursor-pointer transition-colors"
+              style={{ color: copied ? '#4ADE80' : '#4e5270' }}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </span>
+          </div>
+          <div className="mt-3.5">
+            <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#E8915A] no-underline hover:underline">
+              <span className="inline-flex items-center gap-1">
+                <BookOpen size={14} />
+                Docs
+                <ChevronRight size={12} />
+              </span>
+            </a>
+          </div>
+        </div>
+      )}
+
+      {isInstalled && (
+        <>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">Runtime</div>
+              <Field label="Status" value={agent.status === 'connected' ? 'Running' : 'Installed'} />
+              <Field label="Command" value={agent.executable || agent.id} />
+              <Field label="Version" value={agent.version || '-'} />
+            </div>
+
+            <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">Behavior</div>
+              <Field label="View" value="Chat only" />
+              <Field label="ACP" value="Detection only" />
+            </div>
+          </div>
+
+          <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-2.5">Status Notes</div>
+            <div className="text-[11px] text-[#8b8fa7] leading-relaxed">
+              This page shows real install status, version, and local process detection.
+              Full ACP handshake, endpoint discovery, and model metadata are not wired in yet.
+            </div>
+          </div>
+
+          <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium">Install command</div>
+                <div className="text-[11px] text-[#4e5270] mt-0.5 font-mono">{reg.install}</div>
+              </div>
+              <a
+                href={reg.docs}
+                target="_blank"
+                rel="noreferrer"
+                className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs no-underline hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+              >
+                Docs
+              </a>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProps) {
   const [envs, setEnvs] = useState<Env[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -263,7 +404,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   // New state for ACP Agent tab
   const [activeTab, setActiveTab] = useState<'envs' | 'agents'>('envs')
   const [selectedAgentId, setSelectedAgentId] = useState<string>('claude')
-  const [acpAgents] = useState<AcpAgent[]>(MOCK_ACP_AGENTS)
+  const [acpAgents, setAcpAgents] = useState<AcpAgent[]>(ACP_AGENT_SKELETON)
+  const [loadingAcpAgents, setLoadingAcpAgents] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -313,6 +455,43 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   const envSessions = sessions.filter(s => s.env_id === selectedEnvId)
   const selectedAcpAgent = acpAgents.find(a => a.id === selectedAgentId)
 
+  const mergeAcpAgents = (detected: AcpAgent[]) => {
+    const detectedById = new Map(detected.map((agent) => [agent.id, agent]))
+    const merged = ACP_AGENT_SKELETON.map((agent) => ({
+      ...agent,
+      ...detectedById.get(agent.id),
+      name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+    }))
+
+    return [...merged].sort((left, right) => {
+      const leftConnected = left.status === 'connected'
+      const rightConnected = right.status === 'connected'
+
+      if (leftConnected !== rightConnected) {
+        return leftConnected ? -1 : 1
+      }
+
+      return ACP_AGENT_ORDER.indexOf(left.id as typeof ACP_AGENT_ORDER[number]) - ACP_AGENT_ORDER.indexOf(right.id as typeof ACP_AGENT_ORDER[number])
+    })
+  }
+
+  const loadAcpAgents = async () => {
+    setLoadingAcpAgents(true)
+    try {
+      const agents = await invoke<AcpAgent[]>('list_acp_agents')
+      const mergedAgents = mergeAcpAgents(agents)
+      setAcpAgents(mergedAgents)
+      if (!mergedAgents.some(agent => agent.id === selectedAgentId) && mergedAgents.length > 0) {
+        setSelectedAgentId(mergedAgents[0].id)
+      }
+    } catch (error) {
+      console.error('Failed to load ACP agents:', error)
+      setAcpAgents(mergeAcpAgents([]))
+    } finally {
+      setLoadingAcpAgents(false)
+    }
+  }
+
   const scanAgents = async () => {
     if (!selectedEnv) {
       setDetectedAgents(null)
@@ -345,6 +524,12 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       scanAgents()
     }
   }, [selectedEnvId, activeTab])
+
+  useEffect(() => {
+    if (activeTab === 'agents') {
+      loadAcpAgents()
+    }
+  }, [activeTab])
 
   const deleteEnv = async (id: string) => {
     if (!confirm('确定删除此环境？所有关联会话也会被移除。')) return
@@ -542,6 +727,9 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
             {activeTab === 'agents' && (
               <>
+                {loadingAcpAgents && (
+                  <div className="px-3 py-2 text-[11px] text-[#4e5270]">Loading ACP agents...</div>
+                )}
                 {acpAgents.map(agent => {
                   const reg = AGENT_REGISTRY[agent.id]
                   const isSelected = selectedAgentId === agent.id
@@ -568,7 +756,9 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-medium">{reg.name}</div>
                         {agent.status === 'connected' && (
-                          <div className="text-[10px] text-[#4e5270] font-mono mt-0.5">{agent.endpoint}</div>
+                          <div className="text-[10px] text-[#4e5270] font-mono mt-0.5">
+                            {agent.version || 'Running'}
+                          </div>
                         )}
                         {agent.status === 'disconnected' && (
                           <div className="text-[10px] text-[#FBBF24] mt-0.5">已安装，未运行</div>
@@ -818,7 +1008,11 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
         )}
 
         {activeTab === 'agents' && selectedAcpAgent && (
-          <AgentDetail agent={selectedAcpAgent} />
+          <RealAgentDetail
+            agent={selectedAcpAgent}
+            onRefresh={loadAcpAgents}
+            refreshing={loadingAcpAgents}
+          />
         )}
       </div>
 
