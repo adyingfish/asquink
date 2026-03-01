@@ -727,9 +727,6 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
             {activeTab === 'agents' && (
               <>
-                {loadingAcpAgents && (
-                  <div className="px-3 py-2 text-[11px] text-[#4e5270]">Loading ACP agents...</div>
-                )}
                 {acpAgents.map(agent => {
                   const reg = AGENT_REGISTRY[agent.id]
                   const isSelected = selectedAgentId === agent.id
@@ -778,6 +775,9 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                     🔌 Agent 在本地运行，通过 ACP 协议与 ASquink 通信。连接后可在任意环境的会话中使用。
                   </div>
                 </div>
+                {loadingAcpAgents && (
+                  <div className="px-3 py-2 text-[11px] text-[#4e5270]">Loading ACP agents...</div>
+                )}
               </>
             )}
           </div>
