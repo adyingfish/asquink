@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, RefreshCw, Search, Settings2, Trash2 } from 'lucide-react'
+import { Plus, RefreshCw, Search, Trash2 } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
 
 interface SidebarProps {
@@ -413,7 +413,7 @@ export default function Sidebar({
   const activeSessionCount = sessions.filter(session => session.status !== 'disconnected').length
 
   return (
-    <div className="w-[280px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0">
+    <div className="w-[260px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0">
       <div className="px-3.5 py-3 border-b border-[#1d2030]">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#E8915A] to-[#D46A28] shadow-[0_8px_24px_rgba(232,145,90,0.24)] flex items-center justify-center text-white text-sm font-semibold">
@@ -495,9 +495,9 @@ export default function Sidebar({
                 >
                   <span
                     className="text-[9px] text-[#4e5270] w-3 text-center transition-transform duration-150"
-                    style={{ transform: isOpen ? 'rotate(90deg)' : 'none' }}
+                    style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }}
                   >
-                    ▶
+                    ▼
                   </span>
                   <span className="text-base">{getEnvIcon(env)}</span>
                   <div className="flex-1 min-w-0">
@@ -802,32 +802,25 @@ export default function Sidebar({
         )}
       </div>
 
-      {/* Bottom */}
-      <div className="px-3.5 py-3 border-t border-[#1d2030] bg-[#0c0e13] flex flex-col gap-2">
-        <button
-          onClick={() => setShowNewSession(true)}
-          className="w-full h-10 rounded-xl border border-[#E8915A]/30 bg-gradient-to-br from-[#E8915A]/[0.12] to-[#E8915A]/[0.04] text-[#E8915A] text-[12.5px] font-semibold flex items-center justify-center gap-1.5 hover:from-[#E8915A]/[0.18] hover:to-[#E8915A]/[0.07] transition-all cursor-pointer"
+      {/* Bottom bar */}
+      <div className="px-[14px] py-2 border-t border-[#1d2030] flex items-center gap-2.5">
+        <span
+          className="text-[11px] text-[#4e5270] cursor-pointer"
+          onClick={onOpenEnvManage}
+          onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
+          onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
         >
-          <Plus size={14} /> 新建会话
-        </button>
-        <div className="flex items-center gap-3 text-[10px] text-[#4e5270]">
-          <button
-            onClick={onOpenEnvManage}
-            className="inline-flex items-center gap-1.5 text-[11px] text-[#4e5270] cursor-pointer hover:text-[#E8915A] transition-colors"
-            aria-label="Environment settings"
-          >
-            <Settings2 size={12} />
-            环境管理
-          </button>
-          <div className="ml-auto flex items-center gap-3">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" />
-              PTY
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#4ADE80]" />
-              ACP
-            </span>
+          ⚙ 管理
+        </span>
+        <div className="flex-1" />
+        <div className="flex gap-2">
+          <div className="flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" />
+            <span className="text-[9px] text-[#4e5270]">PTY</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#4ADE80]" />
+            <span className="text-[9px] text-[#4e5270]">ACP</span>
           </div>
         </div>
       </div>
@@ -887,31 +880,21 @@ export default function Sidebar({
 
 // Session badge component
 function SessionBadge({ s }: { s: Session }) {
-  const badgeTone = s.mode === 'chat'
-    ? {
-        label: 'CHAT',
-        color: '#C084FC',
-        background: 'rgba(192, 132, 252, 0.1)',
-        border: 'rgba(192, 132, 252, 0.18)',
-      }
-    : {
-        label: 'PTY',
-        color: '#60A5FA',
-        background: 'rgba(96, 165, 250, 0.1)',
-        border: 'rgba(96, 165, 250, 0.18)',
-      }
+  const isTerm = !s.projectId && !s.agentId
+  const label = isTerm ? 'PTY' : (s.mode === 'chat' ? 'ACP' : 'PTY')
+  const color = isTerm ? '#FBBF24' : (s.mode === 'chat' ? '#4ADE80' : '#60A5FA')
+  const background = isTerm ? 'rgba(251, 191, 36, 0.08)' : (s.mode === 'chat' ? 'rgba(74, 222, 128, 0.08)' : 'rgba(96, 165, 250, 0.08)')
 
   return (
     <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 min-h-[34px]">
       <span
-        className="h-5 px-1.5 rounded-md border text-[8.5px] font-semibold tracking-[0.08em] inline-flex items-center"
+        className="h-5 px-1.5 rounded-md text-[8.5px] font-semibold tracking-[0.08em] inline-flex items-center"
         style={{
-          background: badgeTone.background,
-          color: badgeTone.color,
-          borderColor: badgeTone.border,
+          background,
+          color,
         }}
       >
-        {badgeTone.label}
+        {label}
       </span>
       <span className="text-[9px] min-h-[12px]">
         {s.status === 'connected' && s.statusText && (
