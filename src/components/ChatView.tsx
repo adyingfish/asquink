@@ -1,4 +1,4 @@
-import { CheckCircle, Edit, FileText, MessageSquareText, Play, Search, XCircle } from 'lucide-react'
+import { CheckCircle, ChevronRight, Edit, FileText, MessageSquareText, Play, Search, XCircle } from 'lucide-react'
 
 const C = {
   bg0: '#08090d', bg2: '#151820', bg3: '#1b1f2b',
@@ -74,7 +74,6 @@ function DemoChatMessage({ message }: { message: DemoMessage }) {
           <div className="flex items-center gap-2 mb-1.5">
             {message.isNew ? <FileText size={12} style={{ color: C.blu }} /> : <Edit size={12} style={{ color: C.blu }} />}
             <span className="text-[11px] font-semibold" style={{ color: C.blu }}>
-              {message.isNew ? '📄 ' : '✏️ '}
               {message.file}
             </span>
           </div>
@@ -147,8 +146,9 @@ export default function ChatView() {
 
       <div className="flex-1 overflow-y-auto px-4 py-3.5 min-h-0">
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-md mb-4" style={{ background: `${C.pur}08`, border: `1px solid ${C.pur}20` }}>
+          <MessageSquareText size={12} style={{ color: C.pur }} />
           <span style={{ fontSize: '10.5px', color: C.pur }}>
-            💬 此为示例对话界面，实际对话功能开发中
+            此为示例对话界面，实际对话功能开发中
           </span>
         </div>
 
@@ -168,7 +168,8 @@ export default function ChatView() {
           >
             示例
           </span>
-          <span className="text-[12px]" style={{ color: C.t3 }}>
+          <ChevronRight size={14} style={{ color: C.t3 }} />
+          <span className="hidden" style={{ color: C.t3 }}>
             ↵
           </span>
         </div>

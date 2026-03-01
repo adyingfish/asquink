@@ -1,6 +1,24 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Plus, RefreshCw, Search, Trash2, MoreHorizontal } from 'lucide-react'
+import {
+  AppWindow,
+  Check,
+  ChevronRight,
+  Cloud,
+  Folder,
+  FolderOpen,
+  Laptop,
+  MessageSquareText,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Search,
+  Settings,
+  SquareTerminal,
+  Trash2,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
 
 interface SidebarProps {
@@ -37,6 +55,27 @@ const getProjectNameFromPath = (value: string) => {
 const hasProjectContext = (session: Session) => Boolean(session.projectId || session.projectName || session.projectPath)
 
 const isPureTerminalSession = (session: Session) => !hasProjectContext(session) && !session.agentId
+
+type SessionIntent = 'project' | 'chat' | 'terminal'
+type NewSessionStep = 'intent' | 'project' | 'agent' | 'env'
+
+const getEnvIcon = (envType: Env['type']): LucideIcon => {
+  if (envType === 'local') return Laptop
+  if (envType === 'wsl') return AppWindow
+  return Cloud
+}
+
+const getIntentMeta = (intent: SessionIntent | null): { icon: LucideIcon; label: string } => {
+  if (intent === 'project') return { icon: Folder, label: '项目编码' }
+  if (intent === 'chat') return { icon: MessageSquareText, label: 'AI 对话' }
+  return { icon: SquareTerminal, label: '纯终端' }
+}
+
+function EnvTypeIcon({ env, size = 16, className = '' }: { env: Pick<Env, 'type'>; size?: number; className?: string }) {
+  const Icon = getEnvIcon(env.type)
+
+  return <Icon size={size} className={className} />
+}
 
 export default function Sidebar({
   onAddSession,
@@ -110,12 +149,6 @@ export default function Sidebar({
       console.error('Failed to check env status:', error)
       setError('连接失败: ' + error)
     }
-  }
-
-  const getEnvIcon = (env: Env) => {
-    if (env.type === 'local') return '💻'
-    if (env.type === 'wsl') return '🐧'
-    return '☁️'
   }
 
   const getEnvDetail = (env: Env) => {
@@ -496,7 +529,7 @@ export default function Sidebar({
                   >
                     ▼
                   </span>
-                  <span className="text-base">{getEnvIcon(env)}</span>
+                  <EnvTypeIcon env={env} size={16} className="text-[#8b8fa7] shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-[12.5px] font-medium text-[#e2e4ed]">{env.name}</div>
                     <div className="text-[10px] text-[#4e5270] font-mono truncate">{getEnvDetail(env)}</div>
@@ -574,7 +607,7 @@ export default function Sidebar({
                               e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
                             }}
                           >
-                            <span className="text-[11px] text-[#4e5270]">📁</span>
+                            <Folder size={12} className="text-[#4e5270] shrink-0" />
                             <div className="flex-1 min-w-0">
                               <div className="text-[12px] font-medium font-mono truncate">{s.projectName || s.name}</div>
                               <div className="flex items-center gap-1 mt-0.5">
@@ -621,7 +654,7 @@ export default function Sidebar({
                             >
                               ▶
                             </span>
-                            <span className="text-[11px] text-[#4e5270]">📁</span>
+                            <Folder size={12} className="text-[#4e5270] shrink-0" />
                             <div className="flex-1 min-w-0">
                               <div className="text-[12px] font-medium font-mono truncate">
                                 {projSessions[0]?.projectName || projSessions[0]?.name}
@@ -755,7 +788,11 @@ export default function Sidebar({
                             e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
                           }}
                         >
-                          <span className="text-[11px]">{isPureTerminal ? '🖥' : '💬'}</span>
+                          {isPureTerminal ? (
+                            <SquareTerminal size={12} className="shrink-0 text-[#8b8fa7]" />
+                          ) : (
+                            <MessageSquareText size={12} className="shrink-0 text-[#8b8fa7]" />
+                          )}
                           <div className="flex-1 min-w-0">
                             <div className="text-[12px] font-medium truncate">
                               {s.lastMsg || agent?.name || s.name}
@@ -822,7 +859,10 @@ export default function Sidebar({
           onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
           onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
         >
-          ⚙ 管理
+          <span className="inline-flex items-center gap-1">
+            <Settings size={12} />
+            管理
+          </span>
         </span>
         <div className="flex-1" />
         <div className="flex gap-2">
@@ -1042,7 +1082,10 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
       <div className="bg-[#1b1f2b] rounded-2xl w-[420px] border border-[#282d3e] overflow-hidden shadow-2xl">
         {/* Header */}
         <div className="px-5 py-4 border-b border-[#1d2030]">
-          <div className="text-base font-semibold">☁️ 添加 SSH 环境</div>
+          <div className="text-base font-semibold flex items-center gap-2">
+            <Cloud size={16} />
+            添加 SSH 环境
+          </div>
           <div className="text-xs text-[#4e5270] mt-1">配置远程服务器连接</div>
         </div>
 
@@ -1179,8 +1222,8 @@ function NewSessionModal({
   onCreateSession: (env: Env, agentId: string | null, project?: Project) => void
   onCreateSshSession: (env: Env, agentId: string | null, project?: Project, password?: string) => void
 }) {
-  const [step, setStep] = useState<'intent' | 'project' | 'agent' | 'env'>('intent')
-  const [intent, setIntent] = useState<'project' | 'chat' | 'terminal' | null>(null)
+  const [step, setStep] = useState<NewSessionStep>('intent')
+  const [intent, setIntent] = useState<SessionIntent | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const [selectedEnv, setSelectedEnv] = useState<Env | null>(null)
@@ -1239,7 +1282,7 @@ function NewSessionModal({
     reset()
   }
 
-  const handleIntent = (i: 'project' | 'chat' | 'terminal') => {
+  const handleIntent = (i: SessionIntent) => {
     setIntent(i)
     if (i === 'project') setStep('project')
     else if (i === 'chat') {
@@ -1325,8 +1368,8 @@ function NewSessionModal({
 
   const getSummary = () => {
     const parts: string[] = []
-    if (selectedEnv) parts.push(`${selectedEnv.type === 'local' ? '💻' : '☁️'} ${selectedEnv.name}`)
-    if (selectedProject) parts.push(`📁 ${selectedProject.name}`)
+    if (selectedEnv) parts.push(selectedEnv.name)
+    if (selectedProject) parts.push(selectedProject.name)
     if (selectedAgent) {
       const agent = AGENTS.find(a => a.id === selectedAgent)
       if (agent) parts.push(agent.name)
@@ -1336,19 +1379,19 @@ function NewSessionModal({
   }
 
   const getStepTitle = () => {
-    if (step === 'intent') return { title: '🚀 新建会话', sub: '你想做什么？' }
+    if (step === 'intent') return { title: '新建会话', sub: '你想做什么？' }
     if (step === 'project') {
-      if (browsing) return { title: '📂 浏览目录', sub: browseEnv ? '输入工作目录路径' : '在哪个环境上？' }
-      return { title: '📁 选择项目', sub: '选择一个工作目录，或浏览新目录' }
+      if (browsing) return { title: '浏览目录', sub: browseEnv ? '输入工作目录路径' : '在哪个环境上？' }
+      return { title: '选择项目', sub: '选择一个工作目录，或浏览新目录' }
     }
     if (step === 'agent') {
       if (intent === 'project') {
-        return { title: '🤖 选择 Agent', sub: `项目: ${selectedProject?.name} · ${selectedEnv?.type === 'local' ? '💻' : '☁️'} ${selectedEnv?.name}` }
+        return { title: '选择 Agent', sub: `项目: ${selectedProject?.name} · ${selectedEnv?.name}` }
       }
-      return { title: '🤖 选择 Agent', sub: '选择一个 AI 对话助手' }
+      return { title: '选择 Agent', sub: '选择一个 AI 对话助手' }
     }
-    if (step === 'env') return { title: '🖥 选择环境', sub: '连接到哪台机器？' }
-    return { title: '🚀 新建会话', sub: '' }
+    if (step === 'env') return { title: '选择环境', sub: '连接到哪台机器？' }
+    return { title: '新建会话', sub: '' }
   }
 
   const t = getStepTitle()
@@ -1372,7 +1415,17 @@ function NewSessionModal({
               onClick={reset}
               className="cursor-pointer hover:text-[#E8915A]"
             >
-              {intent === 'project' ? '📁 项目编码' : intent === 'chat' ? '💬 AI 对话' : '🖥 纯终端'}
+              {(() => {
+                const meta = getIntentMeta(intent)
+                const Icon = meta.icon
+
+                return (
+                  <span className="inline-flex items-center gap-1">
+                    <Icon size={12} />
+                    {meta.label}
+                  </span>
+                )
+              })()}
             </span>
             {step === 'agent' && selectedProject && (
               <>
@@ -1402,19 +1455,19 @@ function NewSessionModal({
           {step === 'intent' && (
             <>
               <IntentCard
-                icon="📁"
+                icon={Folder}
                 title="在项目中编码"
-                desc="选择目录 → 选择 Agent → 开始编码"
+                desc="选择目录 · 选择 Agent · 开始编码"
                 onClick={() => handleIntent('project')}
               />
               <IntentCard
-                icon="💬"
+                icon={MessageSquareText}
                 title="开一个 AI 对话"
                 desc="无需项目目录，直接与 AI 交流"
                 onClick={() => handleIntent('chat')}
               />
               <IntentCard
-                icon="🖥️"
+                icon={SquareTerminal}
                 title="打开纯终端"
                 desc="SSH / 本地 Shell，不启动 Agent"
                 onClick={() => handleIntent('terminal')}
@@ -1435,12 +1488,12 @@ function NewSessionModal({
                     onClick={() => !isOffline && handlePickProject(p)}
                     className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer bg-[#151820] border border-transparent hover:border-[#282d3e] ${isOffline ? 'opacity-40 cursor-default' : ''}`}
                   >
-                    <span className="text-sm">📁</span>
+                    <Folder size={14} className="shrink-0 text-[#8b8fa7]" />
                     <div className="flex-1 min-w-0">
                       <div className="text-[13px] font-medium font-mono">{p.name}</div>
                       <div className="flex items-center gap-2 mt-1">
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1b1f2b] text-[#4e5270]">
-                          {env?.type === 'local' ? '💻' : '☁️'} {env?.name}
+                          {env?.name}
                         </span>
                         <span className="text-[10px] text-[#4e5270] font-mono">{p.path}</span>
                       </div>
@@ -1454,7 +1507,7 @@ function NewSessionModal({
                 onClick={() => setBrowsing(true)}
                 className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A] hover:text-[#E8915A] transition-colors mt-2"
               >
-                <span className="text-base">📂</span>
+                <FolderOpen size={16} className="shrink-0" />
                 <div>
                   <div className="text-[13px] font-medium">浏览新目录...</div>
                   <div className="text-[11px] text-[#4e5270]">选择环境，输入路径，自动记为项目</div>
@@ -1482,7 +1535,7 @@ function NewSessionModal({
           {step === 'project' && browsing && browseEnv && (
             <>
               <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[#151820]">
-                <span className="text-base">{browseEnv.type === 'local' ? '💻' : '☁️'}</span>
+                <EnvTypeIcon env={browseEnv} size={16} className="shrink-0 text-[#8b8fa7]" />
                 <span className="text-[13px] font-medium">{browseEnv.name}</span>
                 <span
                   onClick={() => setBrowseEnv(null)}
@@ -1512,9 +1565,13 @@ function NewSessionModal({
                   <div className="mt-3 px-4 py-3 rounded-lg bg-[#151820] border border-[#1d2030]">
                     <div className="text-[11px] text-[#4e5270] mb-2">将创建为项目</div>
                     <div className="flex items-center gap-2">
-                      <span>📁</span>
+                      <Folder size={14} className="shrink-0 text-[#8b8fa7]" />
                       <span className="text-[13px] font-mono font-medium">{browseProjectName.trim() || getProjectNameFromPath(browseDir)}</span>
-                      <span className="text-[11px] text-[#4e5270]">on {browseEnv.type === 'local' ? '💻' : '☁️'} {browseEnv.name}</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-[#4e5270]">
+                        on
+                        <EnvTypeIcon env={browseEnv} size={12} />
+                        {browseEnv.name}
+                      </span>
                     </div>
                   </div>
                 )}
@@ -1526,9 +1583,9 @@ function NewSessionModal({
           {step === 'agent' && intent === 'project' && (
             <>
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#151820] mb-2">
-                <span>📁</span>
+                <Folder size={14} className="shrink-0 text-[#8b8fa7]" />
                 <span className="text-[12px] font-mono font-medium">{selectedProject?.name}</span>
-                <span className="text-[10px] text-[#4e5270]">{selectedEnv?.type === 'local' ? '💻' : '☁️'} {selectedEnv?.name} · {selectedProject?.path}</span>
+                <span className="text-[10px] text-[#4e5270]">{selectedEnv?.name} · {selectedProject?.path}</span>
               </div>
               <div className="flex items-center gap-2 mb-1">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">选择 Agent</div>
@@ -1620,7 +1677,10 @@ function NewSessionModal({
               onClick={handleBrowseConfirm}
               className="px-5 py-2 rounded-lg bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white text-[12px] font-semibold shadow-lg"
             >
-              确认目录 →
+              <span className="inline-flex items-center gap-1">
+                确认目录
+                <ChevronRight size={14} />
+              </span>
             </button>
           ) : (
             <button
@@ -1632,7 +1692,10 @@ function NewSessionModal({
                   : 'bg-[#222738] text-[#4e5270]'
               }`}
             >
-              🚀 启动
+              <span className="inline-flex items-center gap-1">
+                <Rocket size={14} />
+                启动
+              </span>
             </button>
           )}
         </div>
@@ -1642,18 +1705,20 @@ function NewSessionModal({
 }
 
 // Intent Card Component
-function IntentCard({ icon, title, desc, onClick }: { icon: string; title: string; desc: string; onClick: () => void }) {
+function IntentCard({ icon: Icon, title, desc, onClick }: { icon: LucideIcon; title: string; desc: string; onClick: () => void }) {
   return (
     <div
       onClick={onClick}
       className="flex items-center gap-4 px-4 py-3.5 rounded-xl cursor-pointer bg-[#151820] border border-transparent hover:border-[#E8915A] hover:bg-[#1b1f2b] transition-all"
     >
-      <span className="text-[28px] w-11 text-center">{icon}</span>
+      <span className="flex w-11 justify-center text-[#8b8fa7]">
+        <Icon size={28} strokeWidth={1.75} />
+      </span>
       <div className="flex-1">
         <div className="text-[14px] font-semibold">{title}</div>
         <div className="text-[12px] text-[#4e5270] mt-0.5">{desc}</div>
       </div>
-      <span className="text-sm text-[#4e5270]">→</span>
+      <ChevronRight size={16} className="text-[#4e5270]" />
     </div>
   )
 }
@@ -1699,7 +1764,7 @@ function AgentCard({ agent, selected, onClick, detectedInfo }: {
           )}
         </div>
       </div>
-      {selected && <span style={{ color: agent.color }} className="text-base">✓</span>}
+      {selected && <Check size={16} style={{ color: agent.color }} />}
     </div>
   )
 }
@@ -1717,7 +1782,7 @@ function EnvCard({ env, selected, disabled, onClick }: { env: Env; selected: boo
           : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
       } transition-colors`}
     >
-      <span className="text-lg">{env.type === 'local' ? '💻' : '☁️'}</span>
+      <EnvTypeIcon env={env} size={18} className="text-[#8b8fa7]" />
       <div className="flex-1">
         <div className="text-[13px] font-medium">{env.name}</div>
         <div className="text-[10px] text-[#4e5270] font-mono">{env.host || 'localhost'}</div>
@@ -1726,7 +1791,7 @@ function EnvCard({ env, selected, disabled, onClick }: { env: Env; selected: boo
       {!disabled && (
         <div className="w-[7px] h-[7px] rounded-full bg-[#4ADE80] shadow-sm shadow-[#4ADE80]" />
       )}
-      {selected && <span className="text-[#E8915A] text-base">✓</span>}
+      {selected && <Check size={16} className="text-[#E8915A]" />}
     </div>
   )
 }

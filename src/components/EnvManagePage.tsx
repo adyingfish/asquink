@@ -1,5 +1,19 @@
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import {
+  AppWindow,
+  Bot,
+  BookOpen,
+  ChevronRight,
+  Cloud,
+  Folder,
+  Laptop,
+  Monitor,
+  Package,
+  Settings,
+  SquareTerminal,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { Env, Project, SessionRecord, AgentInfo } from '../App'
 
 // Agent definitions with colors - for ACP Agent management
@@ -56,15 +70,34 @@ interface EnvManagePageProps {
   onEnvChange?: () => void
 }
 
+const AGENT_ICONS: Record<string, LucideIcon> = {
+  claude: Bot,
+  codex: SquareTerminal,
+  gemini: Bot,
+  opencode: SquareTerminal,
+}
+
+const getEnvIcon = (envType: Env['type']): LucideIcon => {
+  if (envType === 'local') return Laptop
+  if (envType === 'wsl') return AppWindow
+  return Cloud
+}
+
+function EnvTypeIcon({ envType, size = 16, className = '' }: { envType: Env['type']; size?: number; className?: string }) {
+  const Icon = getEnvIcon(envType)
+
+  return <Icon size={size} className={className} />
+}
+
 // Badge component for status display
 const Badge = ({ status }: { status: string }) => {
   const m: Record<string, { bg: string; c: string; t: string }> = {
     connected: { bg: "#4ADE8015", c: "#4ADE80", t: "● 已连接" },
     disconnected: { bg: "#FBBF2415", c: "#FBBF24", t: "○ 未连接" },
-    not_installed: { bg: "#4e527015", c: "#4e5270", t: "✗ 未安装" },
-    valid: { bg: "#4ADE8015", c: "#4ADE80", t: "✓ 有效" },
-    missing: { bg: "#F8717112", c: "#F87171", t: "✗ 未配置" },
-    invalid: { bg: "#F8717112", c: "#F87171", t: "✗ 无效" },
+    not_installed: { bg: "#4e527015", c: "#4e5270", t: "未安装" },
+    valid: { bg: "#4ADE8015", c: "#4ADE80", t: "有效" },
+    missing: { bg: "#F8717112", c: "#F87171", t: "未配置" },
+    invalid: { bg: "#F8717112", c: "#F87171", t: "无效" },
   }
   const s = m[status] || m.disconnected
   return <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: s.bg, color: s.c, fontWeight: 500, whiteSpace: "nowrap" }}>{s.t}</span>
@@ -73,6 +106,7 @@ const Badge = ({ status }: { status: string }) => {
 // ACP Agent Detail component
 function AgentDetail({ agent }: { agent: AcpAgent }) {
   const reg = AGENT_REGISTRY[agent.id]
+  const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
   const isInstalled = agent.status !== "not_installed"
   const isConnected = agent.status === "connected"
   const [copied, setCopied] = useState(false)
@@ -91,7 +125,7 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
           className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
           style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}40` }}
         >
-          {reg.icon}
+          <AgentIcon size={24} style={{ color: reg.color }} />
         </div>
         <div className="flex-1">
           <div className="text-lg font-semibold flex items-center gap-2.5">
@@ -122,7 +156,9 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
       {/* Not installed state */}
       {!isInstalled && (
         <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-8 text-center">
-          <div className="text-4xl mb-3.5">📦</div>
+          <div className="mb-3.5 flex justify-center">
+            <Package size={32} className="text-[#8b8fa7]" />
+          </div>
           <div className="text-base font-medium mb-2">{reg.name} 尚未安装</div>
           <div className="text-xs text-[#4e5270] leading-relaxed max-w-[400px] mx-auto mb-4.5">
             在本地终端安装后，ASquink 会通过 ACP 自动检测并连接。
@@ -135,12 +171,16 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
               className="text-[10px] px-2 py-1 rounded bg-[#1b1f2b] font-medium cursor-pointer transition-colors"
               style={{ color: copied ? "#4ADE80" : "#4e5270" }}
             >
-              {copied ? "✓ 已复制" : "📋 复制"}
+              {copied ? "已复制" : "复制"}
             </span>
           </div>
           <div className="mt-3.5">
             <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#E8915A] no-underline hover:underline">
-              📖 查看文档 →
+              <span className="inline-flex items-center gap-1">
+                <BookOpen size={14} />
+                查看文档
+                <ChevronRight size={12} />
+              </span>
             </a>
           </div>
         </div>
@@ -410,7 +450,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
           ←
         </span>
         <div>
-          <div className="text-base font-semibold">⚙ 环境与 Agent 管理</div>
+          <div className="text-base font-semibold flex items-center gap-2">
+            <Settings size={16} />
+            环境与 Agent 管理
+          </div>
           <div className="text-[11px] text-[#4e5270] mt-0.5">管理远程环境连接和本地 ACP Agent</div>
         </div>
       </div>
@@ -421,8 +464,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
           {/* Tabs */}
           <div className="flex border-b border-[#1d2030] flex-shrink-0">
             {[
-              { id: 'envs' as const, label: '🖥 环境' },
-              { id: 'agents' as const, label: '🤖 ACP Agent' },
+              { id: 'envs' as const, label: '环境', icon: Monitor },
+              { id: 'agents' as const, label: 'ACP Agent', icon: Bot },
             ].map(t => (
               <div
                 key={t.id}
@@ -434,7 +477,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   background: activeTab === t.id ? '#151820' : 'transparent',
                 }}
               >
-                {t.label}
+                <span className="inline-flex items-center gap-1.5">
+                  <t.icon size={13} />
+                  {t.label}
+                </span>
               </div>
             ))}
           </div>
@@ -454,7 +500,6 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   const isSelected = selectedEnvId === env.id
                   const isLocal = env.type === 'local'
                   const isWsl = env.type === 'wsl'
-                  const envIcon = isLocal ? '💻' : isWsl ? '🐧' : '☁️'
                   const envDetail = isLocal ? (env.detail || 'localhost') : isWsl ? (env.wsl_distro || 'WSL') : (env.host || '-')
                   const isOnline = env.status === 'online'
                   return (
@@ -467,7 +512,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                           : 'border border-transparent hover:bg-[#222738]'
                       }`}
                     >
-                      <span className="text-xl">{envIcon}</span>
+                      <EnvTypeIcon envType={env.type} size={18} className="text-[#8b8fa7]" />
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-medium">{env.name}</div>
                         <div className="text-[10.5px] text-[#4e5270] font-mono truncate">
@@ -514,7 +559,11 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         className="w-9 h-9 rounded-md flex items-center justify-center text-base"
                         style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}30` }}
                       >
-                        {reg.icon}
+                        {(() => {
+                          const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
+
+                          return <AgentIcon size={18} style={{ color: reg.color }} />
+                        })()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-medium">{reg.name}</div>
@@ -549,7 +598,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
           <div className="flex-1 overflow-y-auto p-5">
             <div className="flex items-center gap-3.5 mb-6">
               <div className="w-12 h-12 rounded-xl bg-[#1b1f2b] flex items-center justify-center text-3xl border border-[#282d3e]">
-                {selectedEnv.type === 'local' ? '💻' : selectedEnv.type === 'wsl' ? '🐧' : '☁️'}
+                <EnvTypeIcon envType={selectedEnv.type} size={28} className="text-[#8b8fa7]" />
               </div>
               <div className="flex-1">
                 <div className="text-lg font-semibold flex items-center gap-2">
@@ -571,7 +620,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 <div className="flex items-center gap-3">
                   {connectionResult?.id === selectedEnv.id && (
                     <div className={`text-xs px-3 py-1.5 rounded-lg ${connectionResult.success ? 'bg-[#4ADE80]/10 text-[#4ADE80] border border-[#4ADE80]/30' : 'bg-[#F87171]/10 text-[#F87171] border border-[#F87171]/30'}`}>
-                      {connectionResult.success ? '✓' : '✗'} {connectionResult.message}
+                      {connectionResult.success ? '成功' : '失败'} {connectionResult.message}
                     </div>
                   )}
                   <button
@@ -606,7 +655,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
               {/* System info */}
               <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">💻 系统</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3 inline-flex items-center gap-1.5">
+                  <Laptop size={12} />
+                  系统
+                </div>
                 <Field label="系统" value={selectedEnv.detail || '-'} />
                 <Field label="会话" value={`${envSessions.length} 个`} />
               </div>
@@ -615,10 +667,13 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
             {/* Projects on this env */}
             {envProjects.length > 0 && (
               <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">📁 此环境上的项目</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3 inline-flex items-center gap-1.5">
+                  <Folder size={12} />
+                  此环境上的项目
+                </div>
                 {envProjects.map(p => (
                   <div key={p.id} className="flex items-center gap-2 px-2.5 py-1.75 rounded-lg bg-[#1b1f2b] mb-1.5">
-                    <span className="text-sm">📁</span>
+                    <Folder size={14} className="text-[#8b8fa7]" />
                     <div className="flex-1">
                       <div className="text-xs font-medium font-mono">{p.name}</div>
                       <div className="text-[10px] text-[#4e5270] font-mono">{p.path}</div>
@@ -631,7 +686,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
             {/* Agents on this env */}
             <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
               <div className="flex items-center justify-between mb-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">🤖 此环境上的 Agent</div>
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] inline-flex items-center gap-1.5">
+                  <Bot size={12} />
+                  此环境上的 Agent
+                </div>
                 {scanningAgents && (
                   <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
                 )}
@@ -780,7 +838,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                     : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
                 }`}
               >
-                ☁️ SSH
+                <span className="inline-flex items-center gap-1.5">
+                  <Cloud size={14} />
+                  SSH
+                </span>
               </button>
               {wslInstalled && (
                 <button
@@ -791,7 +852,10 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
                   }`}
                 >
-                  🐧 WSL
+                  <span className="inline-flex items-center gap-1.5">
+                    <AppWindow size={14} />
+                    WSL
+                  </span>
                 </button>
               )}
             </div>
