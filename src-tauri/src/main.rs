@@ -2,9 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tokio::sync::Mutex;
+use tokio::time::{timeout, Duration};
 use session::TerminalSession;
 
 mod database;
@@ -106,6 +108,96 @@ pub struct AgentInfo {
     executable: String,
     installed: bool,
     version: Option<String>,
+}
+
+fn parse_version_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return Some(stdout);
+    }
+
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return Some(stderr);
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+async fn probe_version_with_cmd(executable: &str, args: &[&str]) -> Option<String> {
+    let mut command = tokio::process::Command::new("cmd");
+    command.arg("/C").arg(executable);
+    for arg in args {
+        command.arg(arg);
+    }
+
+    let output = timeout(Duration::from_secs(3), command.output()).await.ok()?.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_version_output(&output.stdout, &output.stderr)
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn probe_version_with_cmd(_executable: &str, _args: &[&str]) -> Option<String> {
+    None
+}
+
+async fn probe_version_direct(executable: &str, args: &[&str]) -> Option<String> {
+    let mut command = tokio::process::Command::new(executable);
+    for arg in args {
+        command.arg(arg);
+    }
+
+    let output = timeout(Duration::from_secs(3), command.output()).await.ok()?.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_version_output(&output.stdout, &output.stderr)
+}
+
+#[cfg(target_os = "windows")]
+fn npm_package_json_for_executable(executable: &str) -> Option<PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    let base = PathBuf::from(appdata).join("npm").join("node_modules");
+
+    match executable {
+        "codex" => Some(base.join("@openai").join("codex").join("package.json")),
+        "gemini" => Some(base.join("@google").join("gemini-cli").join("package.json")),
+        "opencode" => Some(base.join("opencode-ai").join("package.json")),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn npm_package_json_for_executable(_executable: &str) -> Option<PathBuf> {
+    None
+}
+
+fn read_package_version(path: PathBuf) -> Option<String> {
+    let contents = std::fs::read_to_string(path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    json.get("version")?.as_str().map(|value| value.to_string())
+}
+
+async fn detect_agent_version(executable: &str) -> Option<String> {
+    let probes = [["--version"], ["-v"], ["version"]];
+
+    for args in probes {
+        if let Some(version) = probe_version_direct(executable, &args).await {
+            return Some(version);
+        }
+
+        if let Some(version) = probe_version_with_cmd(executable, &args).await {
+            return Some(version);
+        }
+    }
+
+    let package_json = npm_package_json_for_executable(executable)?;
+    read_package_version(package_json)
 }
 
 // Agent definitions - match frontend AGENTS array
@@ -406,24 +498,7 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
         .map_err(|e| e.to_string())?;
 
     let installed = output.status.success();
-    let version = if installed {
-        // Try to get version
-        let version_output = tokio::process::Command::new(&agent)
-            .arg("--version")
-            .output()
-            .await
-            .ok();
-
-        version_output.and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
-            } else {
-                None
-            }
-        })
-    } else {
-        None
-    };
+    let version = if installed { detect_agent_version(&agent).await } else { None };
 
     Ok(AgentStatus { installed, version })
 }
@@ -441,23 +516,7 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
             .await;
 
         let installed = output.map(|o| o.status.success()).unwrap_or(false);
-        let version = if installed {
-            let version_output = tokio::process::Command::new(executable)
-                .arg("--version")
-                .output()
-                .await
-                .ok();
-
-            version_output.and_then(|o| {
-                if o.status.success() {
-                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
-        };
+        let version = if installed { detect_agent_version(executable).await } else { None };
 
         result.push(AgentInfo {
             id: id.to_string(),
