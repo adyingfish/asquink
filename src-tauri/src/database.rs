@@ -47,6 +47,16 @@ pub struct SessionRecord {
     pub ended_at: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateSessionRecord {
+    pub id: String,
+    pub name: Option<String>,
+    pub env_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub project_id: Option<String>,
+    pub working_dir: Option<String>,
+}
+
 impl Database {
     pub async fn new(database_url: &str) -> Result<Self, sqlx::Error> {
         let pool = SqlitePoolOptions::new()
@@ -119,9 +129,10 @@ impl Database {
             r#"
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
+                name TEXT,
                 env_id TEXT,
-                env_type TEXT NOT NULL,
                 agent_id TEXT,
+                project_id TEXT,
                 working_dir TEXT,
                 started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 ended_at DATETIME,
@@ -363,28 +374,76 @@ impl Database {
         .fetch_all(&self.pool)
         .await?;
 
-        let column_names: Vec<&str> = columns.iter().map(|(name,)| name.as_str()).collect();
+        let column_names: Vec<String> = columns.into_iter().map(|(name,)| name).collect();
+        let has_column = |name: &str| column_names.iter().any(|column| column == name);
 
         // Add missing columns
-        if !column_names.contains(&"env_id") {
+        if !has_column("env_id") {
             sqlx::query("ALTER TABLE sessions ADD COLUMN env_id TEXT")
                 .execute(&self.pool)
                 .await?;
         }
-        if !column_names.contains(&"name") {
+        if !has_column("name") {
             sqlx::query("ALTER TABLE sessions ADD COLUMN name TEXT")
                 .execute(&self.pool)
                 .await?;
         }
-        if !column_names.contains(&"project_id") {
+        if !has_column("project_id") {
             sqlx::query("ALTER TABLE sessions ADD COLUMN project_id TEXT")
                 .execute(&self.pool)
                 .await?;
         }
-        if !column_names.contains(&"project_path") {
-            sqlx::query("ALTER TABLE sessions ADD COLUMN project_path TEXT")
-                .execute(&self.pool)
+
+        if has_column("env_type") || has_column("project_path") {
+            let working_dir_expr = if has_column("project_path") {
+                "COALESCE(working_dir, project_path)"
+            } else {
+                "working_dir"
+            };
+
+            let mut tx = self.pool.begin().await?;
+            sqlx::query("PRAGMA foreign_keys = OFF")
+                .execute(&mut *tx)
                 .await?;
+
+            sqlx::query(
+                r#"
+                CREATE TABLE sessions_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT,
+                    env_id TEXT,
+                    agent_id TEXT,
+                    project_id TEXT,
+                    working_dir TEXT,
+                    started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    ended_at DATETIME,
+                    FOREIGN KEY (env_id) REFERENCES envs(id),
+                    FOREIGN KEY (agent_id) REFERENCES agents(id)
+                )
+                "#,
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            let copy_sql = format!(
+                r#"
+                INSERT INTO sessions_new (id, name, env_id, agent_id, project_id, working_dir, started_at, ended_at)
+                SELECT id, name, env_id, agent_id, project_id, {working_dir_expr}, started_at, ended_at
+                FROM sessions
+                "#
+            );
+            sqlx::query(&copy_sql).execute(&mut *tx).await?;
+
+            sqlx::query("DROP TABLE sessions")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("ALTER TABLE sessions_new RENAME TO sessions")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
         }
 
         Ok(())
@@ -637,6 +696,24 @@ impl Database {
     }
 
     pub async fn delete_project(&self, id: &str) -> Result<(), sqlx::Error> {
+        let project: Option<(String, String)> = sqlx::query_as(
+            "SELECT name, path FROM projects WHERE id = ?1"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some((name, path)) = project {
+            sqlx::query(
+                "UPDATE sessions SET project_id = ?1, working_dir = COALESCE(working_dir, ?2) WHERE project_id = ?3"
+            )
+            .bind(name)
+            .bind(path)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        }
+
         sqlx::query("DELETE FROM projects WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
@@ -645,20 +722,18 @@ impl Database {
     }
 
     // Session management methods
-    pub async fn create_session(&self, session: &SessionRecord) -> Result<(), sqlx::Error> {
+    pub async fn create_session(&self, session: &CreateSessionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, name, env_id, env_type, agent_id, project_id, project_path, working_dir, started_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))
+            INSERT INTO sessions (id, name, env_id, agent_id, project_id, working_dir, started_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
             "#,
         )
         .bind(&session.id)
         .bind(&session.name)
         .bind(&session.env_id)
-        .bind(&session.env_type)
         .bind(&session.agent_id)
         .bind(&session.project_id)
-        .bind(&session.project_path)
         .bind(&session.working_dir)
         .execute(&self.pool)
         .await?;
@@ -667,7 +742,30 @@ impl Database {
 
     pub async fn list_sessions(&self) -> Result<Vec<SessionRecord>, sqlx::Error> {
         let sessions = sqlx::query_as::<_, SessionRecord>(
-            "SELECT id, name, env_id, env_type, agent_id, project_id, project_path, working_dir, started_at, ended_at FROM sessions ORDER BY started_at DESC"
+            r#"
+            SELECT
+                s.id,
+                s.name,
+                s.env_id,
+                COALESCE(
+                    e.type,
+                    CASE
+                        WHEN s.id LIKE 'ssh-%' THEN 'ssh'
+                        WHEN s.id LIKE 'wsl-%' THEN 'wsl'
+                        ELSE 'local'
+                    END
+                ) AS env_type,
+                s.agent_id,
+                COALESCE(p.name, s.project_id) AS project_id,
+                COALESCE(p.path, s.working_dir) AS project_path,
+                s.working_dir,
+                s.started_at,
+                s.ended_at
+            FROM sessions s
+            LEFT JOIN envs e ON e.id = s.env_id
+            LEFT JOIN projects p ON p.id = s.project_id
+            ORDER BY s.started_at DESC
+            "#
         )
         .fetch_all(&self.pool)
         .await?;

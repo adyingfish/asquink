@@ -101,7 +101,7 @@ function App() {
       const historicalSessions: Session[] = records.map(r => ({
         id: r.id,
         name: r.name || 'Unknown',
-        type: r.env_type as 'local' | 'ssh',
+        type: r.env_type as 'local' | 'ssh' | 'wsl',
         envId: r.env_id || undefined,
         agentId: r.agent_id || undefined,
         projectId: r.project_id || undefined,

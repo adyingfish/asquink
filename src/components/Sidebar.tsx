@@ -124,10 +124,20 @@ export default function Sidebar({
     return env.name
   }
 
+  const resolveProjectRecord = (envId: string, projectName?: string, projectPath?: string) => {
+    if (!projectName || !projectPath) return undefined
+    return projects.find(project =>
+      project.env_id === envId &&
+      project.name === projectName &&
+      project.path === projectPath
+    )
+  }
+
   // 创建本地会话（带 Agent 和可选项目）
   const createLocalSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
     const id = `local-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
+    const project = resolveProjectRecord(env.id, projectId, projectPath)
 
     console.log('Creating local session:', { id, envId: env.id, agentId, projectId, projectPath })
 
@@ -149,10 +159,8 @@ export default function Sidebar({
       const sessionInfo = {
         name: env.name,
         envId: env.id,
-        envType: 'local',
         agentId: agentId || null,
-        projectId: projectId || null,
-        projectPath: projectPath || null,
+        projectId: project?.id || null,
         workingDir: projectPath || null,
       }
 
@@ -197,6 +205,7 @@ export default function Sidebar({
   const createSshSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string, pwd?: string | null) => {
     const sessionId = `ssh-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
+    const project = resolveProjectRecord(env.id, projectId, projectPath)
 
     onAddSession({
       id: sessionId,
@@ -224,10 +233,8 @@ export default function Sidebar({
         sessionInfo: {
           name: env.name,
           envId: env.id,
-          envType: 'ssh',
           agentId: agentId || null,
-          projectId,
-          projectPath,
+          projectId: project?.id || null,
           workingDir: projectPath,
         }
       })
@@ -264,6 +271,7 @@ export default function Sidebar({
   const createWslSessionWithAgent = async (env: Env, agentId: string | null, projectId?: string, projectPath?: string) => {
     const sessionId = `wsl-${Date.now()}`
     const agent = agentId ? AGENTS.find(a => a.id === agentId) : null
+    const project = resolveProjectRecord(env.id, projectId, projectPath)
 
     onAddSession({
       id: sessionId,
@@ -289,10 +297,8 @@ export default function Sidebar({
         sessionInfo: {
           name: env.name,
           envId: env.id,
-          envType: 'wsl',
           agentId: agentId || null,
-          projectId,
-          projectPath,
+          projectId: project?.id || null,
           workingDir: projectPath,
         }
       })

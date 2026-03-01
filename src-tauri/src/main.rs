@@ -143,11 +143,23 @@ pub struct CreateProjectRequest {
 pub struct CreateSessionInfo {
     name: Option<String>,
     env_id: Option<String>,
-    env_type: String,
     agent_id: Option<String>,
     project_id: Option<String>,
-    project_path: Option<String>,
     working_dir: Option<String>,
+}
+
+fn into_create_session_record(
+    session_id: String,
+    info: CreateSessionInfo,
+) -> database::CreateSessionRecord {
+    database::CreateSessionRecord {
+        id: session_id,
+        name: info.name,
+        env_id: info.env_id,
+        agent_id: info.agent_id,
+        project_id: info.project_id,
+        working_dir: info.working_dir,
+    }
 }
 
 // Initialize database on app start
@@ -526,18 +538,7 @@ async fn create_local_session(
 
     // Save session to database if info provided
     if let Some(info) = session_info {
-        let record = database::SessionRecord {
-            id: session_id.clone(),
-            name: info.name,
-            env_id: info.env_id,
-            env_type: info.env_type,
-            agent_id: info.agent_id,
-            project_id: info.project_id,
-            project_path: info.project_path,
-            working_dir: info.working_dir,
-            started_at: None,
-            ended_at: None,
-        };
+        let record = into_create_session_record(session_id.clone(), info);
         state.db.create_session(&record).await.map_err(|e| e.to_string())?;
     }
 
@@ -593,18 +594,7 @@ async fn create_ssh_session(
 
     // Save session to database if info provided
     if let Some(info) = session_info {
-        let record = database::SessionRecord {
-            id: session_id.clone(),
-            name: info.name,
-            env_id: info.env_id,
-            env_type: info.env_type,
-            agent_id: info.agent_id,
-            project_id: info.project_id,
-            project_path: info.project_path,
-            working_dir: info.working_dir,
-            started_at: None,
-            ended_at: None,
-        };
+        let record = into_create_session_record(session_id.clone(), info);
         state.db.create_session(&record).await.map_err(|e| e.to_string())?;
     }
 
@@ -655,18 +645,7 @@ async fn create_wsl_session(
 
     // Save session to database if info provided
     if let Some(info) = session_info {
-        let record = database::SessionRecord {
-            id: session_id.clone(),
-            name: info.name,
-            env_id: info.env_id,
-            env_type: info.env_type,
-            agent_id: info.agent_id,
-            project_id: info.project_id,
-            project_path: info.project_path,
-            working_dir: info.working_dir,
-            started_at: None,
-            ended_at: None,
-        };
+        let record = into_create_session_record(session_id.clone(), info);
         state.db.create_session(&record).await.map_err(|e| e.to_string())?;
     }
 
