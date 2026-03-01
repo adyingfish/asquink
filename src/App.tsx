@@ -4,8 +4,8 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TerminalView from './components/TerminalView'
 import EnvManagePage from './components/EnvManagePage'
-import { getAgentSessionMode, shouldAutoLaunchAgent } from './agents'
 import { TerminalController } from './utils/terminalController'
+import { getAgentSessionMode, shouldAutoLaunchAgent } from './utils/agents'
 
 export interface AgentInfo {
   id: string

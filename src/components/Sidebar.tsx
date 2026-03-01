@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
-import { AGENTS, CHAT_AGENTS, PROJECT_AGENTS, getAgentDefinition, getAgentSessionMode, shouldAutoLaunchAgent } from '../agents'
+import { AGENTS, CHAT_AGENTS, PROJECT_AGENTS, getAgentDefinition, getAgentSessionMode, shouldAutoLaunchAgent } from '../utils/agents'
 
 interface SidebarProps {
   onAddSession: (session: Session) => void

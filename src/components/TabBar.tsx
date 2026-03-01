@@ -1,6 +1,6 @@
 import { Command, MessageSquareText, Monitor, X } from 'lucide-react'
 import type { Session } from '../App'
-import { getAgentDefinition } from '../agents'
+import { getAgentDefinition } from '../utils/agents'
 
 interface TabBarProps {
   sessions: Session[]
