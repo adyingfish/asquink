@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bot, Command, MessageSquareText, Monitor, PlugZap } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import type { Session } from '../App'
-import type { TerminalController } from './terminalController'
+import type { TerminalController } from '../utils/terminalController'
 import ChatView from './ChatView'
 
 interface TerminalViewProps {

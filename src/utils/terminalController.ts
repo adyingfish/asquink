@@ -32,6 +32,7 @@ export class TerminalController {
   private pasteTarget: HTMLTextAreaElement | null = null
   private layoutReady = false
   private receivedOutputForSession = false
+  private handlePaste: ((event: ClipboardEvent) => void) | null = null
 
   mount(container: HTMLDivElement): void {
     if (this.container === container && this.terminal) {
@@ -68,7 +69,7 @@ export class TerminalController {
       return
     }
 
-    const activeSession = this.sessions.find(session => session.id === activeSessionId)
+    const activeSession = this.sessions.find((session) => session.id === activeSessionId)
     if (!activeSession) {
       this.lastBoundSessionId = null
       this.teardownSessionBinding()
@@ -206,8 +207,8 @@ export class TerminalController {
         domEvent.preventDefault()
         domEvent.stopPropagation()
         readText()
-          .then(text => this.writeToActiveSession(text))
-          .catch(err => {
+          .then((text) => this.writeToActiveSession(text))
+          .catch((err) => {
             console.error('Paste failed:', err)
           })
       }
@@ -243,13 +244,9 @@ export class TerminalController {
         return
       }
 
-      const session = this.sessions.find(item => item.id === sessionId)
+      const session = this.sessions.find((item) => item.id === sessionId)
       if (session?.status === 'connected') {
-        // 修复 PowerShell 换行问题
-        // 当用户按下回车键时，xterm.js 可能发送 \r 或 \n
-        // PowerShell 需要 \r\n 来正确执行命令
         let processedData = data
-        // 处理单独的回车或换行符
         if (processedData === '\r' || processedData === '\n') {
           processedData = '\r\n'
         }
@@ -351,9 +348,7 @@ export class TerminalController {
     this.fitAddon.fit()
 
     const next = { cols: this.terminal.cols, rows: this.terminal.rows }
-    const changed =
-      next.cols !== this.lastTerminalDims.cols ||
-      next.rows !== this.lastTerminalDims.rows
+    const changed = next.cols !== this.lastTerminalDims.cols || next.rows !== this.lastTerminalDims.rows
 
     this.lastTerminalDims = next
     if (next.cols > 0 && next.rows > 0) {
@@ -364,7 +359,7 @@ export class TerminalController {
       return
     }
 
-    const session = this.sessions.find(item => item.id === this.activeSessionId)
+    const session = this.sessions.find((item) => item.id === this.activeSessionId)
     if (session?.status === 'connected') {
       invoke('resize_session', {
         sessionId: this.activeSessionId,
@@ -466,8 +461,8 @@ export class TerminalController {
       }
 
       readText()
-        .then(text => this.writeToActiveSession(text))
-        .catch(err => {
+        .then((text) => this.writeToActiveSession(text))
+        .catch((err) => {
           console.error('Paste failed:', err)
         })
     }
@@ -477,8 +472,6 @@ export class TerminalController {
     this.pasteTarget?.addEventListener('paste', handlePaste as EventListener)
     this.handlePaste = handlePaste
   }
-
-  private handlePaste: ((event: ClipboardEvent) => void) | null = null
 
   private removePasteHandlers(): void {
     if (!this.handlePaste || !this.container) {
@@ -496,18 +489,14 @@ export class TerminalController {
       return
     }
 
-    const session = this.sessions.find(item => item.id === this.activeSessionId)
+    const session = this.sessions.find((item) => item.id === this.activeSessionId)
     if (session?.status !== 'connected') {
       return
     }
 
-    // 修复 PowerShell 换行问题：将所有换行符标准化为 \r\n
     let processedText = text
-    // 先将所有 \r\n 转换为 \n，避免重复处理
     processedText = processedText.replace(/\r\n/g, '\n')
-    // 再将所有单独的 \r 转换为 \n
     processedText = processedText.replace(/\r/g, '\n')
-    // 最后将所有 \n 转换为 \r\n
     processedText = processedText.replace(/\n/g, '\r\n')
 
     invoke('write_to_session', {

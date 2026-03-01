@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar'
 import TabBar from './components/TabBar'
 import TerminalView from './components/TerminalView'
 import EnvManagePage from './components/EnvManagePage'
-import { TerminalController } from './components/terminalController'
+import { TerminalController } from './utils/terminalController'
 
 // Agent IDs for auto-launch
 const AGENT_IDS = ['claude', 'codex', 'gemini', 'opencode', 'openclaw']
