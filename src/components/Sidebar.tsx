@@ -33,7 +33,25 @@ interface AcpAgentInfo {
   lastError?: string | null
   runtimeSupported: boolean
   installHint?: string | null
+  installTarget: string
+  locationLabel: string
+  wslDistro?: string | null
 }
+
+const ACP_AGENT_SKELETON: AcpAgentInfo[] = [
+  { id: 'claude', name: 'Claude Code ACP', executable: 'claude', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+  { id: 'codex', name: 'Codex ACP', executable: 'codex', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+  { id: 'gemini', name: 'Gemini ACP', executable: 'gemini', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+  { id: 'opencode', name: 'OpenCode ACP', executable: 'opencode', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+]
+
+const buildWslAcpSkeleton = (locationLabel: string, wslDistro: string): AcpAgentInfo[] =>
+  ACP_AGENT_SKELETON.map((agent) => ({
+    ...agent,
+    installTarget: 'wsl',
+    locationLabel,
+    wslDistro,
+  }))
 
 interface SidebarProps {
   onAddSession: (session: Session) => void
@@ -175,11 +193,11 @@ export default function Sidebar({
   // 创建本地会话（带 Agent 和可选项目）
   const createAcpSession = async (env: Env, acpAgentId: string | null, project?: Project) => {
     if (!project?.path) {
-      setError('ACP session requires a project working directory')
+      setError('ACP 会话必须绑定项目工作目录')
       return
     }
     if (!acpAgentId) {
-      setError('Please choose a concrete ACP agent')
+      setError('请选择具体的 ACP Agent')
       return
     }
 
@@ -218,7 +236,7 @@ export default function Sidebar({
     } catch (error) {
       console.error('Failed to create ACP session:', error)
       onSessionStatusChange?.(sessionId, 'disconnected')
-      setError('Failed to create ACP session: ' + error)
+      setError('创建 ACP 会话失败: ' + error)
     }
   }
 
@@ -1291,13 +1309,40 @@ function NewSessionModal({
   const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
   const [acpAgents, setAcpAgents] = useState<AcpAgentInfo[] | null>(null)
   const [scanningAgents, setScanningAgents] = useState(false)
+  const [acpNotice, setAcpNotice] = useState<string | null>(null)
 
   const scanAgents = async () => {
     setScanningAgents(true)
     try {
+      let acpPromise: Promise<AcpAgentInfo[]>
+      if (selectedEnv?.type === 'wsl') {
+        const acpWslEnvId = await invoke<string | null>('get_acp_wsl_env_id')
+
+        if (!acpWslEnvId) {
+          setAcpNotice('WSL ACP 未配置。请先在 ACP Agent 管理页选择一个 WSL 环境。')
+          acpPromise = Promise.resolve([])
+        } else if (acpWslEnvId !== selectedEnv.id) {
+          setAcpNotice(`WSL ACP 当前绑定到其他环境。请在 ACP Agent 管理页切换到 ${selectedEnv.name} 后再使用。`)
+          acpPromise = Promise.resolve([])
+        } else {
+          setAcpNotice(`ACP 将在 ${selectedEnv.name}${selectedEnv.wsl_distro ? ` (${selectedEnv.wsl_distro})` : ''} 中启动。`)
+          if (selectedEnv.wsl_distro) {
+            setAcpAgents(buildWslAcpSkeleton(`WSL · ${selectedEnv.wsl_distro}`, selectedEnv.wsl_distro))
+          }
+          acpPromise = invoke<AcpAgentInfo[]>('list_acp_agents', {
+            installTarget: 'wsl',
+            distro: selectedEnv.wsl_distro,
+            user: selectedEnv.wsl_user ?? null,
+          })
+        }
+      } else {
+        setAcpNotice(null)
+        setAcpAgents(ACP_AGENT_SKELETON)
+        acpPromise = invoke<AcpAgentInfo[]>('list_acp_agents')
+      }
       const [agents, acp] = await Promise.all([
         invoke<AgentInfo[]>('scan_agents'),
-        invoke<AcpAgentInfo[]>('list_acp_agents'),
+        acpPromise,
       ])
       setDetectedAgents(agents)
       setAcpAgents(acp)
@@ -1323,6 +1368,7 @@ function NewSessionModal({
     setBrowseProjectName('')
     setDetectedAgents(null)
     setAcpAgents(null)
+    setAcpNotice(null)
   }
 
   const goBack = () => {
@@ -1672,7 +1718,16 @@ function NewSessionModal({
               ))}
               <div className="h-px bg-[#1d2030] my-3" />
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">ACP Agents</div>
-              <div className="text-[11px] text-[#4e5270] mb-2">选择一个已安装的 ACP runtime，并以 chat 模式在当前项目目录中启动。</div>
+              <div className="text-[11px] text-[#4e5270] mb-2">
+                {acpAgents?.[0]?.locationLabel
+                  ? `选择 ${acpAgents[0].locationLabel} 上已安装的 ACP runtime，并以 chat 模式在当前项目目录中启动。`
+                  : '选择一个已安装的 ACP runtime，并以 chat 模式在当前项目目录中启动。'}
+              </div>
+              {acpNotice && (
+                <div className="text-[11px] text-[#8b8fa7] mb-2 px-3 py-2 rounded-lg bg-[#151820] border border-[#1d2030]">
+                  {acpNotice}
+                </div>
+              )}
               {(acpAgents || []).map((agent) => (
                 <AcpAgentCard
                   key={agent.id}
@@ -1814,12 +1869,12 @@ function AcpAgentCard({ agent, selected, onClick }: {
   const fallback = getAcpRuntimeDefinition(agent.id)
   const isSelectable = agent.runtimeSupported && agent.status !== 'not_installed'
   const statusNote = agent.status === 'not_installed'
-    ? 'CLI not installed'
+    ? 'CLI 未安装'
     : !agent.runtimeSupported
-      ? 'CLI detected, ACP runtime missing'
+      ? '已检测到 CLI，但缺少 ACP Runtime'
       : agent.lastError
         ? agent.lastError
-        : 'ACP runtime available'
+        : 'ACP Runtime 可用'
   const tone = agent.status === 'ready'
     ? 'bg-green-500/10 text-green-400'
     : agent.status === 'not_installed'
@@ -1843,6 +1898,9 @@ function AcpAgentCard({ agent, selected, onClick }: {
           <div className="text-[13px] font-medium">{agent.name || fallback?.name || agent.id}</div>
           <span className={`text-[9px] px-1.5 py-0.5 rounded ${tone}`}>
             {agent.status === 'not_installed' ? '未安装' : agent.status === 'runtime_missing' ? '缺少 ACP Runtime' : agent.status}
+          </span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#1b1f2b] text-[#8b8fa7]">
+            {agent.locationLabel}
           </span>
         </div>
         <div className="flex items-center gap-2">

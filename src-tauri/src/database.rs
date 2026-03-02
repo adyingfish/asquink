@@ -948,6 +948,42 @@ impl Database {
         Ok(sessions)
     }
 
+    pub async fn get_session(&self, id: &str) -> Result<Option<SessionRecord>, sqlx::Error> {
+        let session = sqlx::query_as::<_, SessionRecord>(
+            r#"
+            SELECT
+                s.id,
+                s.name,
+                s.env_id,
+                COALESCE(
+                    e.type,
+                    CASE
+                        WHEN s.id LIKE 'ssh-%' THEN 'ssh'
+                        WHEN s.id LIKE 'wsl-%' THEN 'wsl'
+                        ELSE 'local'
+                    END
+                ) AS env_type,
+                s.agent_id,
+                s.acp_agent_id,
+                p.id AS project_id,
+                COALESCE(p.name, s.project_id) AS project_name,
+                COALESCE(p.path, s.working_dir) AS project_path,
+                s.working_dir,
+                s.started_at,
+                s.ended_at
+            FROM sessions s
+            LEFT JOIN envs e ON e.id = s.env_id
+            LEFT JOIN projects p ON p.id = s.project_id
+            WHERE s.id = ?1
+            LIMIT 1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(session)
+    }
+
     pub async fn end_session(&self, id: &str) -> Result<(), sqlx::Error> {
         sqlx::query("UPDATE sessions SET ended_at = datetime('now') WHERE id = ?1")
             .bind(id)

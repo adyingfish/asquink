@@ -126,6 +126,9 @@ pub struct AcpAgentInfo {
     last_error: Option<String>,
     runtime_supported: bool,
     install_hint: Option<String>,
+    install_target: String,
+    location_label: String,
+    wsl_distro: Option<String>,
 }
 
 fn parse_version_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
@@ -237,6 +240,149 @@ async fn command_exists(executable: &str) -> bool {
         .await
         .map(|output| output.status.success())
         .unwrap_or(false)
+}
+
+async fn command_exists_in_wsl(executable: &str, distro: &str, user: Option<&str>) -> bool {
+    let mut command = tokio::process::Command::new("wsl.exe");
+    command.arg("--distribution").arg(distro);
+    if let Some(user) = user {
+        command.arg("--user").arg(user);
+    }
+    command.arg("--exec").arg("which").arg(executable);
+
+    command
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+async fn probe_version_in_wsl(
+    executable: &str,
+    args: &[&str],
+    distro: &str,
+    user: Option<&str>,
+) -> Option<String> {
+    let mut command = tokio::process::Command::new("wsl.exe");
+    command.arg("--distribution").arg(distro);
+    if let Some(user) = user {
+        command.arg("--user").arg(user);
+    }
+    command.arg("--exec").arg(executable);
+    for arg in args {
+        command.arg(arg);
+    }
+
+    let output = command.output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    parse_version_output(&output.stdout, &output.stderr)
+}
+
+async fn detect_agent_version_in_wsl(
+    executable: &str,
+    distro: &str,
+    user: Option<&str>,
+) -> Option<String> {
+    let probes = [["--version"], ["-v"], ["version"]];
+
+    for args in probes {
+        if let Some(version) = probe_version_in_wsl(executable, &args, distro, user).await {
+            return Some(version);
+        }
+    }
+
+    None
+}
+
+async fn resolve_acp_launch_target(
+    db: &Database,
+    session_id: &str,
+    session_info: Option<&CreateSessionInfo>,
+) -> Result<acp::AcpLaunchTarget, String> {
+    let env_id = if let Some(env_id) = session_info.and_then(|info| info.env_id.clone()) {
+        Some(env_id)
+    } else {
+        db.get_session(session_id)
+            .await
+            .map_err(|err| err.to_string())?
+            .and_then(|session| session.env_id)
+    };
+
+    let Some(env_id) = env_id else {
+        return Ok(acp::AcpLaunchTarget::Local);
+    };
+
+    let env = db.get_env(&env_id).await.map_err(|err| err.to_string())?;
+    if env.env_type == "wsl" {
+        let configured_wsl_env_id = db
+            .get_setting("acp_wsl_env_id")
+            .await
+            .map_err(|err| err.to_string())?
+            .ok_or(
+                "WSL ACP is not configured. Select one WSL environment in ACP Agent settings first."
+                    .to_string(),
+            )?;
+        if configured_wsl_env_id != env_id {
+            return Err(format!(
+                "WSL ACP is configured for a different environment. Switch ACP Agent settings to use {} before starting this ACP session.",
+                env.name
+            ));
+        }
+
+        let distro = env
+            .wsl_distro
+            .ok_or("WSL distribution not configured".to_string())?;
+        Ok(acp::AcpLaunchTarget::Wsl {
+            distro,
+            user: env.wsl_user,
+        })
+    } else {
+        Ok(acp::AcpLaunchTarget::Local)
+    }
+}
+
+#[tauri::command]
+async fn get_acp_wsl_env_id(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Option<String>, String> {
+    let db = {
+        let state = state.lock().await;
+        state.db.clone()
+    };
+
+    db.get_setting("acp_wsl_env_id")
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn set_acp_wsl_env_id(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    env_id: Option<String>,
+) -> Result<(), String> {
+    let db = {
+        let state = state.lock().await;
+        state.db.clone()
+    };
+
+    match env_id {
+        Some(env_id) => {
+            let env = db.get_env(&env_id).await.map_err(|err| err.to_string())?;
+            if env.env_type != "wsl" {
+                return Err("ACP WSL setting must point to a WSL environment".to_string());
+            }
+            db.set_setting("acp_wsl_env_id", &env_id)
+                .await
+                .map_err(|err| err.to_string())
+        }
+        None => db
+            .delete_setting("acp_wsl_env_id")
+            .await
+            .map_err(|err| err.to_string()),
+    }
 }
 
 #[allow(dead_code)]
@@ -681,27 +827,60 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
 #[tauri::command]
 async fn list_acp_agents(
     state: State<'_, Arc<Mutex<AppState>>>,
+    install_target: Option<String>,
+    distro: Option<String>,
+    user: Option<String>,
 ) -> Result<Vec<AcpAgentInfo>, String> {
     let acp_manager = {
         let state = state.lock().await;
         state.acp_manager.clone()
     };
     let runtime_summary = acp_manager.runtime_summary().await;
+    let launch_target = match install_target.as_deref() {
+        Some("wsl") => acp::AcpLaunchTarget::Wsl {
+            distro: distro.ok_or("WSL distro is required for WSL ACP scan".to_string())?,
+            user,
+        },
+        _ => acp::AcpLaunchTarget::Local,
+    };
+    let location_key = launch_target.location_key();
+    let location_label = launch_target.location_label();
+    let wsl_distro = match &launch_target {
+        acp::AcpLaunchTarget::Wsl { distro, .. } => Some(distro.clone()),
+        acp::AcpLaunchTarget::Local => None,
+    };
     let mut result = Vec::new();
 
     for definition in acp::acp_runtime_definitions() {
-        let runtime_state = runtime_summary.get(definition.id);
-        let installed = command_exists(definition.install_probe).await;
-        let runtime_supported =
-            runtime_state.is_some() || command_exists(definition.runtime_probe).await;
-        let version =
-            if let Some(version) = runtime_state.and_then(|state| state.runtime_version.clone()) {
-                Some(version)
-            } else if installed {
-                detect_agent_version(definition.install_probe).await
-            } else {
-                None
+        let runtime_state = runtime_summary.get(&format!("{location_key}::{}", definition.id));
+        let installed = match &launch_target {
+            acp::AcpLaunchTarget::Local => command_exists(definition.install_probe).await,
+            acp::AcpLaunchTarget::Wsl { distro, user } => {
+                command_exists_in_wsl(definition.install_probe, distro, user.as_deref()).await
+            }
+        };
+        let runtime_supported = runtime_state.is_some()
+            || match &launch_target {
+                acp::AcpLaunchTarget::Local => command_exists(definition.runtime_probe).await,
+                acp::AcpLaunchTarget::Wsl { distro, user } => {
+                    command_exists_in_wsl(definition.runtime_probe, distro, user.as_deref()).await
+                }
             };
+        let version = if let Some(version) =
+            runtime_state.and_then(|state| state.runtime_version.clone())
+        {
+            Some(version)
+        } else if installed {
+            match &launch_target {
+                acp::AcpLaunchTarget::Local => detect_agent_version(definition.install_probe).await,
+                acp::AcpLaunchTarget::Wsl { distro, user } => {
+                    detect_agent_version_in_wsl(definition.install_probe, distro, user.as_deref())
+                        .await
+                }
+            }
+        } else {
+            None
+        };
         let pid = runtime_state.and_then(|state| state.pid);
         let status = if !installed {
             "not_installed"
@@ -738,6 +917,9 @@ async fn list_acp_agents(
                 }
                 .to_string(),
             ),
+            install_target: launch_target.install_target().to_string(),
+            location_label: location_label.clone(),
+            wsl_distro: wsl_distro.clone(),
         });
     }
 
@@ -770,11 +952,13 @@ async fn create_acp_session(
                 .and_then(|dir| dir.to_str().map(|value| value.to_string()))
         })
         .ok_or("ACP session requires a working directory".to_string())?;
+    let launch_target = resolve_acp_launch_target(&db, &session_id, session_info.as_ref()).await?;
 
     let result = acp_manager
         .create_session(
             session_id.clone(),
             acp_agent_id,
+            launch_target,
             resolved_working_dir.clone(),
             db.clone(),
             app_handle,
@@ -1246,6 +1430,8 @@ fn main() {
             check_agent_installed,
             scan_agents,
             list_acp_agents,
+            get_acp_wsl_env_id,
+            set_acp_wsl_env_id,
             create_acp_session,
             send_acp_message,
             close_acp_session,

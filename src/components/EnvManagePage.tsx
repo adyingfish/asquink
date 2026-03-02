@@ -47,6 +47,9 @@ interface AcpAgent {
   lastError?: string | null
   runtimeSupported?: boolean
   installHint?: string | null
+  installTarget?: string
+  locationLabel?: string
+  wslDistro?: string | null
   models?: string[]
   activeModel?: string | null
   apiKey?: string | null
@@ -55,14 +58,26 @@ interface AcpAgent {
   monthUsage?: string | null
 }
 
+const LOCAL_ACP_LOCATION = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows') ? 'Windows 本机' : '本机'
+
 const ACP_AGENT_SKELETON: AcpAgent[] = [
-  { id: 'claude', name: 'Claude Code', executable: 'claude', status: 'disconnected', version: null, pid: null },
-  { id: 'codex', name: 'Codex CLI', executable: 'codex', status: 'disconnected', version: null, pid: null },
-  { id: 'gemini', name: 'Gemini CLI', executable: 'gemini', status: 'disconnected', version: null, pid: null },
-  { id: 'opencode', name: 'OpenCode', executable: 'opencode', status: 'disconnected', version: null, pid: null },
+  { id: 'claude', name: 'Claude Code', executable: 'claude', status: 'disconnected', version: null, pid: null, installTarget: 'windows', locationLabel: LOCAL_ACP_LOCATION },
+  { id: 'codex', name: 'Codex CLI', executable: 'codex', status: 'disconnected', version: null, pid: null, installTarget: 'windows', locationLabel: LOCAL_ACP_LOCATION },
+  { id: 'gemini', name: 'Gemini CLI', executable: 'gemini', status: 'disconnected', version: null, pid: null, installTarget: 'windows', locationLabel: LOCAL_ACP_LOCATION },
+  { id: 'opencode', name: 'OpenCode', executable: 'opencode', status: 'disconnected', version: null, pid: null, installTarget: 'windows', locationLabel: LOCAL_ACP_LOCATION },
 ]
 
 const ACP_AGENT_ORDER = ['claude', 'codex', 'gemini', 'opencode'] as const
+
+const getAcpAgentKey = (agent: AcpAgent) => `${agent.installTarget || 'local'}:${agent.wslDistro || ''}:${agent.id}`
+
+const buildWslAcpSkeleton = (locationLabel: string, wslDistro: string): AcpAgent[] =>
+  ACP_AGENT_SKELETON.map((agent) => ({
+    ...agent,
+    installTarget: 'wsl',
+    locationLabel,
+    wslDistro,
+  }))
 
 // Mock ACP Agents data (will be replaced with real data from backend later)
 const MOCK_ACP_AGENTS: AcpAgent[] = [
@@ -109,11 +124,11 @@ function EnvTypeIcon({ envType, size = 16, className = '' }: { envType: Env['typ
 // Badge component for status display
 const Badge = ({ status }: { status: string }) => {
   const m: Record<string, { bg: string; c: string; t: string }> = {
-    ready: { bg: "#4ADE8015", c: "#4ADE80", t: "Ready" },
-    handshaking: { bg: "#FBBF2415", c: "#FBBF24", t: "Handshaking" },
-    starting: { bg: "#FBBF2415", c: "#FBBF24", t: "Starting" },
-    error: { bg: "#F8717112", c: "#F87171", t: "Error" },
-    closed: { bg: "#F8717112", c: "#F87171", t: "Closed" },
+    ready: { bg: "#4ADE8015", c: "#4ADE80", t: "就绪" },
+    handshaking: { bg: "#FBBF2415", c: "#FBBF24", t: "握手中" },
+    starting: { bg: "#FBBF2415", c: "#FBBF24", t: "启动中" },
+    error: { bg: "#F8717112", c: "#F87171", t: "错误" },
+    closed: { bg: "#F8717112", c: "#F87171", t: "已关闭" },
     disconnected: { bg: "#FBBF2415", c: "#FBBF24", t: "○ 未连接" },
     runtime_missing: { bg: "#F8717112", c: "#F87171", t: "缺少 ACP Runtime" },
     not_installed: { bg: "#4e527015", c: "#4e5270", t: "未安装" },
@@ -276,16 +291,16 @@ function RealAgentDetail({
   const [copied, setCopied] = useState(false)
   const installCommand = agent.installHint || reg.install
   const statusLabel = agent.status === 'ready'
-    ? 'Ready'
+    ? '就绪'
     : agent.status === 'handshaking'
-      ? 'Handshaking'
+      ? '握手中'
       : runtimeMissing
-        ? 'ACP runtime missing'
-        : 'Installed'
-  const acpState = agent.protocolVersion || agent.protocol || (agent.runtimeSupported ? 'Runtime wired' : 'Runtime missing')
+        ? '缺少 ACP Runtime'
+        : '已安装'
+  const acpState = agent.protocolVersion || agent.protocol || (agent.runtimeSupported ? '已接入 Runtime' : '缺少 Runtime')
   const statusNote = runtimeMissing
-    ? 'Base CLI detected, but the ACP runtime or adapter required by ASquink is not installed yet.'
-    : 'This page shows real install status, version, and local process detection. Full ACP handshake, endpoint discovery, and model metadata are not wired in yet.'
+    ? '已检测到基础 CLI，但 ASquink 所需的 ACP runtime 或 adapter 尚未安装。'
+    : '此页面显示真实的本地安装状态、版本和进程检测结果。完整 ACP 握手、端点发现和模型元数据暂未接入。'
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -317,7 +332,7 @@ function RealAgentDetail({
           className="px-3.5 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors inline-flex items-center gap-1.5"
         >
           <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-          Rescan
+          重新检测
         </button>
       </div>
 
@@ -326,9 +341,9 @@ function RealAgentDetail({
           <div className="mb-3.5 flex justify-center">
             <Package size={32} className="text-[#8b8fa7]" />
           </div>
-          <div className="text-base font-medium mb-2">{reg.name} not installed</div>
+          <div className="text-base font-medium mb-2">{reg.name} 未安装</div>
           <div className="text-xs text-[#4e5270] leading-relaxed max-w-[400px] mx-auto mb-4.5">
-            This panel now uses real local detection. Install the CLI first, then refresh to load actual version and runtime status.
+            当前面板使用真实本地检测。请先安装 CLI，再重新检测以加载实际版本和 Runtime 状态。
           </div>
           <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#08090d] border border-[#1d2030]">
             <span className="font-mono text-sm text-[#8b8fa7]">$ {installCommand}</span>
@@ -337,14 +352,14 @@ function RealAgentDetail({
               className="text-[10px] px-2 py-1 rounded bg-[#1b1f2b] font-medium cursor-pointer transition-colors"
               style={{ color: copied ? '#4ADE80' : '#4e5270' }}
             >
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? '已复制' : '复制'}
             </span>
           </div>
           <div className="mt-3.5">
             <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#E8915A] no-underline hover:underline">
               <span className="inline-flex items-center gap-1">
                 <BookOpen size={14} />
-                Docs
+                文档
                 <ChevronRight size={12} />
               </span>
             </a>
@@ -356,21 +371,22 @@ function RealAgentDetail({
         <>
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">Runtime</div>
-              <Field label="Status" value={statusLabel} />
-              <Field label="Command" value={agent.executable || agent.id} />
-              <Field label="Version" value={agent.version || '-'} />
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">运行时</div>
+              <Field label="位置" value={agent.locationLabel || '本机'} />
+              <Field label="状态" value={statusLabel} />
+              <Field label="命令" value={agent.executable || agent.id} />
+              <Field label="版本" value={agent.version || '-'} />
             </div>
 
             <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">Behavior</div>
-              <Field label="View" value="Chat only" />
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">行为</div>
+              <Field label="视图" value="仅聊天" />
               <Field label="ACP" value={acpState} />
             </div>
           </div>
 
           <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-2.5">Status Notes</div>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-2.5">状态说明</div>
             <div className="text-[11px] text-[#8b8fa7] leading-relaxed">
               {statusNote}
             </div>
@@ -379,7 +395,7 @@ function RealAgentDetail({
           <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-medium">{runtimeMissing ? 'ACP runtime install' : 'Install command'}</div>
+                <div className="text-xs font-medium">{runtimeMissing ? 'ACP Runtime 安装命令' : '安装命令'}</div>
                 <div className="text-[11px] text-[#4e5270] mt-0.5 font-mono">{installCommand}</div>
               </div>
               <div className="flex items-center gap-2">
@@ -387,7 +403,7 @@ function RealAgentDetail({
                   onClick={() => copyToClipboard(installCommand)}
                   className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs hover:border-[#4ADE80] hover:text-[#4ADE80] transition-colors"
                 >
-                  {copied ? 'Copied' : 'Copy'}
+                  {copied ? '已复制' : '复制'}
                 </button>
                 <a
                   href={reg.docs}
@@ -395,7 +411,7 @@ function RealAgentDetail({
                   rel="noreferrer"
                   className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs no-underline hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
                 >
-                  Docs
+                  文档
                 </a>
               </div>
             </div>
@@ -432,13 +448,16 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
   // New state for ACP Agent tab
   const [activeTab, setActiveTab] = useState<'envs' | 'agents'>('envs')
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('claude')
+  const [selectedAgentKey, setSelectedAgentKey] = useState<string>('')
   const [acpAgents, setAcpAgents] = useState<AcpAgent[]>(ACP_AGENT_SKELETON)
   const [loadingAcpAgents, setLoadingAcpAgents] = useState(false)
+  const [configuredAcpWslEnvId, setConfiguredAcpWslEnvId] = useState<string | null>(null)
+  const [pendingAcpWslEnvId, setPendingAcpWslEnvId] = useState<string>('')
 
   useEffect(() => {
     loadData()
     checkWsl()
+    loadAcpWslConfig()
   }, [])
 
   const loadData = async () => {
@@ -479,45 +498,96 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     }
   }
 
+  const loadAcpWslConfig = async () => {
+    try {
+      const envId = await invoke<string | null>('get_acp_wsl_env_id')
+      setConfiguredAcpWslEnvId(envId)
+      setPendingAcpWslEnvId(envId || '')
+    } catch (error) {
+      console.error('Failed to load ACP WSL config:', error)
+      setConfiguredAcpWslEnvId(null)
+      setPendingAcpWslEnvId('')
+    }
+  }
+
   const selectedEnv = envs.find(e => e.id === selectedEnvId)
   const envProjects = projects.filter(p => p.env_id === selectedEnvId)
   const envSessions = sessions.filter(s => s.env_id === selectedEnvId)
-  const selectedAcpAgent = acpAgents.find(a => a.id === selectedAgentId)
-
-  const mergeAcpAgents = (detected: AcpAgent[]) => {
-    const detectedById = new Map(detected.map((agent) => [agent.id, agent]))
-    const merged = ACP_AGENT_SKELETON.map((agent) => ({
-      ...agent,
-      ...detectedById.get(agent.id),
-      name: AGENT_REGISTRY[agent.id]?.name || agent.name,
-    }))
-
-    return [...merged].sort((left, right) => {
-      const leftConnected = left.status === 'ready'
-      const rightConnected = right.status === 'ready'
-
-      if (leftConnected !== rightConnected) {
-        return leftConnected ? -1 : 1
-      }
-
-      return ACP_AGENT_ORDER.indexOf(left.id as typeof ACP_AGENT_ORDER[number]) - ACP_AGENT_ORDER.indexOf(right.id as typeof ACP_AGENT_ORDER[number])
-    })
-  }
+  const selectedAcpAgent = acpAgents.find(a => getAcpAgentKey(a) === selectedAgentKey)
+  const localAcpAgents = acpAgents.filter((agent) => agent.installTarget !== 'wsl')
+  const wslAcpAgents = acpAgents.filter((agent) => agent.installTarget === 'wsl')
 
   const loadAcpAgents = async () => {
     setLoadingAcpAgents(true)
     try {
-      const agents = await invoke<AcpAgent[]>('list_acp_agents')
-      const mergedAgents = mergeAcpAgents(agents)
+      const configuredWslEnv = envs.find((env) => env.id === configuredAcpWslEnvId && env.type === 'wsl')
+      const initialAgents = [
+        ...ACP_AGENT_SKELETON,
+        ...(configuredWslEnv?.wsl_distro
+          ? buildWslAcpSkeleton(`WSL · ${configuredWslEnv.wsl_distro}`, configuredWslEnv.wsl_distro)
+          : []),
+      ]
+      setAcpAgents(initialAgents)
+
+      const scopes: Promise<AcpAgent[]>[] = [invoke<AcpAgent[]>('list_acp_agents')]
+      if (wslInstalled && configuredWslEnv?.wsl_distro) {
+        scopes.push(
+          invoke<AcpAgent[]>('list_acp_agents', {
+            installTarget: 'wsl',
+            distro: configuredWslEnv.wsl_distro,
+            user: configuredWslEnv.wsl_user ?? null,
+          }),
+        )
+      }
+      const settled = await Promise.allSettled(scopes)
+      const detected = settled
+        .flatMap((result) => result.status === 'fulfilled' ? result.value : [])
+        .map((agent) => ({
+          ...agent,
+          name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+        }))
+      const detectedByKey = new Map(detected.map((agent) => [getAcpAgentKey(agent), agent]))
+      const mergedLocalAgents = ACP_AGENT_SKELETON.map((agent) => ({
+        ...agent,
+        ...detectedByKey.get(getAcpAgentKey(agent)),
+        name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+      }))
+      const mergedWslAgents = (configuredWslEnv?.wsl_distro
+        ? buildWslAcpSkeleton(`WSL · ${configuredWslEnv.wsl_distro}`, configuredWslEnv.wsl_distro)
+        : []
+      ).map((agent) => ({
+        ...agent,
+        ...detectedByKey.get(getAcpAgentKey(agent)),
+        name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+      })).sort((left, right) => {
+          const leftConnected = left.status === 'ready'
+          const rightConnected = right.status === 'ready'
+          if (leftConnected !== rightConnected) {
+            return leftConnected ? -1 : 1
+          }
+          return ACP_AGENT_ORDER.indexOf(left.id as typeof ACP_AGENT_ORDER[number]) - ACP_AGENT_ORDER.indexOf(right.id as typeof ACP_AGENT_ORDER[number])
+        })
+      const mergedAgents = [...mergedLocalAgents, ...mergedWslAgents]
+
       setAcpAgents(mergedAgents)
-      if (!mergedAgents.some(agent => agent.id === selectedAgentId) && mergedAgents.length > 0) {
-        setSelectedAgentId(mergedAgents[0].id)
+      if (!mergedAgents.some(agent => getAcpAgentKey(agent) === selectedAgentKey) && mergedAgents.length > 0) {
+        setSelectedAgentKey(getAcpAgentKey(mergedAgents[0]))
       }
     } catch (error) {
       console.error('Failed to load ACP agents:', error)
-      setAcpAgents(mergeAcpAgents([]))
+      setAcpAgents(ACP_AGENT_SKELETON)
     } finally {
       setLoadingAcpAgents(false)
+    }
+  }
+
+  const saveAcpWslConfig = async () => {
+    try {
+      const nextValue = pendingAcpWslEnvId || null
+      await invoke('set_acp_wsl_env_id', { envId: nextValue })
+      await loadAcpWslConfig()
+    } catch (error) {
+      console.error('Failed to save ACP WSL config:', error)
     }
   }
 
@@ -558,7 +628,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     if (activeTab === 'agents') {
       loadAcpAgents()
     }
-  }, [activeTab])
+  }, [activeTab, wslInstalled, configuredAcpWslEnvId, envs])
 
   const deleteEnv = async (id: string) => {
     if (!confirm('确定删除此环境？所有关联会话也会被移除。')) return
@@ -756,13 +826,17 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
             {activeTab === 'agents' && (
               <>
-                {acpAgents.map(agent => {
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">
+                  {LOCAL_ACP_LOCATION}
+                </div>
+                {localAcpAgents.map((agent) => {
                   const reg = AGENT_REGISTRY[agent.id]
-                  const isSelected = selectedAgentId === agent.id
+                  const agentKey = getAcpAgentKey(agent)
+                  const isSelected = selectedAgentKey === agentKey
                   return (
+                    <div key={agentKey}>
                     <div
-                      key={agent.id}
-                      onClick={() => setSelectedAgentId(agent.id)}
+                      onClick={() => setSelectedAgentKey(agentKey)}
                       className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors"
                       style={{
                         background: isSelected ? `${reg.color}15` : 'transparent',
@@ -783,23 +857,110 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         <div className="text-[13px] font-medium">{reg.name}</div>
                         {agent.status === 'ready' && (
                           <div className="text-[10px] text-[#4e5270] font-mono mt-0.5">
-                            {agent.version || 'Running'}
+                            {agent.version || '运行中'}
                           </div>
                         )}
-                        {false && agent.status === 'runtime_missing' && (
-                          <div className="text-[10px] text-[#FBBF24] mt-0.5">已安装，未运行</div>
-                        )}
                         {agent.status === 'runtime_missing' && (
-                          <div className="text-[10px] text-[#F87171] mt-0.5">CLI detected, ACP runtime missing</div>
+                          <div className="text-[10px] text-[#F87171] mt-0.5">已检测到 CLI，但缺少 ACP Runtime</div>
                         )}
                         {agent.status !== 'ready' && agent.status !== 'not_installed' && agent.status !== 'runtime_missing' && (
-                          <div className="text-[10px] text-[#FBBF24] mt-0.5">ACP runtime installed, not running</div>
+                          <div className="text-[10px] text-[#FBBF24] mt-0.5">ACP Runtime 已安装，当前未运行</div>
                         )}
                         {agent.status === 'not_installed' && (
                           <div className="text-[10px] text-[#4e5270] mt-0.5">未安装</div>
                         )}
                       </div>
                       <Badge status={agent.status} />
+                    </div>
+                    </div>
+                  )
+                })}
+
+                {wslInstalled && (
+                  <div className="mb-3 p-3 rounded-lg bg-[#151820] border border-[#1d2030]">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-2">WSL ACP 配置</div>
+                    <div className="text-[11px] text-[#8b8fa7] mb-2">
+                      WSL ACP 一次只会通过一个已配置的 WSL 环境进行检测与连接。
+                    </div>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <select
+                        value={pendingAcpWslEnvId}
+                        onChange={(e) => setPendingAcpWslEnvId(e.target.value)}
+                        className="flex-1 min-w-0 px-3 py-2 rounded-lg border border-[#282d3e] bg-[#0f1117] text-[#e2e4ed] text-[12px] outline-none"
+                      >
+                        <option value="">不使用 WSL ACP</option>
+                        {envs.filter((env) => env.type === 'wsl').map((env) => (
+                          <option key={env.id} value={env.id}>
+                            {env.name} {env.wsl_distro ? `(${env.wsl_distro})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => void saveAcpWslConfig()}
+                        className="w-20 shrink-0 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-[12px] hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+                      >
+                        应用
+                      </button>
+                    </div>
+                    <div className="text-[10px] text-[#4e5270] mt-2">
+                      {configuredAcpWslEnvId
+                        ? `当前 WSL ACP 环境：${envs.find((env) => env.id === configuredAcpWslEnvId)?.name || configuredAcpWslEnvId}`
+                        : '当前 WSL ACP 环境：未配置'}
+                    </div>
+                  </div>
+                )}
+                {wslAcpAgents.map((agent, index) => {
+                  const reg = AGENT_REGISTRY[agent.id]
+                  const agentKey = getAcpAgentKey(agent)
+                  const isSelected = selectedAgentKey === agentKey
+                  const previousLocation = index > 0 ? wslAcpAgents[index - 1].locationLabel : null
+                  return (
+                    <div key={agentKey}>
+                      {agent.locationLabel && agent.locationLabel !== previousLocation && (
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mt-3 mb-1">
+                          {agent.locationLabel}
+                        </div>
+                      )}
+                    <div
+                      onClick={() => setSelectedAgentKey(agentKey)}
+                      className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors"
+                      style={{
+                        background: isSelected ? `${reg.color}15` : 'transparent',
+                        border: isSelected ? `1px solid ${reg.color}40` : '1px solid transparent',
+                      }}
+                    >
+                      <div
+                        className="w-9 h-9 rounded-md flex items-center justify-center text-base"
+                        style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}30` }}
+                      >
+                        {(() => {
+                          const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
+
+                          return <AgentIcon size={18} style={{ color: reg.color }} />
+                        })()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[13px] font-medium">{reg.name}</div>
+                        {agent.status === 'ready' && (
+                          <div className="text-[10px] text-[#4e5270] font-mono mt-0.5">
+                            {agent.version || '运行中'}
+                          </div>
+                        )}
+                        {false && agent.status === 'runtime_missing' && (
+                          <div className="text-[10px] text-[#FBBF24] mt-0.5">已安装，未运行</div>
+                        )}
+                        {agent.status === 'runtime_missing' && (
+                          <div className="text-[10px] text-[#F87171] mt-0.5">已检测到 CLI，但缺少 ACP Runtime</div>
+                        )}
+                        {agent.status !== 'ready' && agent.status !== 'not_installed' && agent.status !== 'runtime_missing' && (
+                          <div className="text-[10px] text-[#FBBF24] mt-0.5">ACP Runtime 已安装，当前未运行</div>
+                        )}
+                        {agent.status === 'not_installed' && (
+                          <div className="text-[10px] text-[#4e5270] mt-0.5">未安装</div>
+                        )}
+                      </div>
+                      <Badge status={agent.status} />
+                    </div>
                     </div>
                   )
                 })}
@@ -811,7 +972,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   </div>
                 </div>
                 {loadingAcpAgents && (
-                  <div className="px-3 py-2 text-[11px] text-[#4e5270]">Loading ACP agents...</div>
+                  <div className="px-3 py-2 text-[11px] text-[#4e5270]">正在加载 ACP Agent...</div>
                 )}
               </>
             )}

@@ -471,3 +471,11 @@ Provider detection also needs two separate states:
 
 The management UI must not treat "CLI installed" and "ACP runtime available" as the same thing.
 For example, `claude` and `codex` may be present locally while still lacking the ACP adapter/runtime needed for ASquink to start an ACP session.
+
+On Windows hosts, ACP detection and launch should also distinguish:
+
+- Windows-installed runtimes
+- WSL-installed runtimes, scoped to a concrete distro
+
+When the user selects a WSL project/environment, the ACP runtime should be scanned and launched inside that WSL distro instead of assuming the Windows-side install.
+WSL ACP should not auto-scan every distro. The user must explicitly choose one WSL environment in ACP settings, and only that single configured WSL environment may be used for ACP until the user switches it.

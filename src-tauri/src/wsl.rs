@@ -290,7 +290,7 @@ fn parse_wsl_list(output: &str) -> Result<Vec<WslDistro>> {
 
 /// Convert Windows path to WSL path
 /// C:\Users\... -> /mnt/c/Users/...
-fn windows_to_wsl_path(path: &str) -> String {
+pub(crate) fn windows_to_wsl_path(path: &str) -> String {
     // Handle UNC paths
     if path.starts_with("\\\\") {
         return path.replace("\\", "/");
