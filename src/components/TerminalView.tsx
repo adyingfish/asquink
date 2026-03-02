@@ -3,6 +3,7 @@ import { Bot, Command, MessageSquareText, Monitor, PlugZap } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import type { Session } from '../App'
 import type { TerminalController } from '../utils/terminalController'
+import { getAcpRuntimeDefinition } from '../utils/agents'
 import ChatView from './ChatView'
 
 interface TerminalViewProps {
@@ -29,6 +30,14 @@ const C = {
 const getAgentMeta = (session: Session | undefined) => {
   if (!session?.agentId) {
     return { label: 'Terminal', color: '#8b8fa7' }
+  }
+
+  if (session.agentId === 'acp') {
+    const runtime = getAcpRuntimeDefinition(session.acpAgentId)
+    return {
+      label: runtime?.name || 'ACP Agent',
+      color: runtime?.color || '#4ADE80',
+    }
   }
 
   return AGENT_META[session.agentId as keyof typeof AGENT_META] ?? {
@@ -78,8 +87,9 @@ const getSessionModeMeta = (session: Session) => {
   }
 
   if (session.mode === 'chat') {
+    const acpRuntime = getAcpRuntimeDefinition(session.acpAgentId)
     return {
-      label: session.agentId === 'acp' ? 'ACP Agent' : 'Chat Agent',
+      label: session.agentId === 'acp' ? (acpRuntime?.short || 'ACP Agent') : 'Chat Agent',
       icon: MessageSquareText,
       color: session.agentId === 'acp' ? '#4ADE80' : '#C084FC',
       background: session.agentId === 'acp' ? 'rgba(74, 222, 128, 0.12)' : 'rgba(192, 132, 252, 0.12)',
@@ -354,7 +364,7 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
             ...chatPaneStyle,
           }}
         >
-          <ChatView />
+          <ChatView session={activeSession} />
         </div>
       </div>
 

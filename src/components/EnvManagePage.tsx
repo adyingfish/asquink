@@ -38,11 +38,15 @@ interface AcpAgent {
   id: string
   name?: string
   executable?: string
-  status: 'connected' | 'disconnected' | 'not_installed'
+  status: 'ready' | 'handshaking' | 'starting' | 'error' | 'closed' | 'disconnected' | 'not_installed' | 'runtime_missing'
   version?: string | null
   pid: number | null
   endpoint?: string | null
   protocol?: string | null
+  protocolVersion?: string | null
+  lastError?: string | null
+  runtimeSupported?: boolean
+  installHint?: string | null
   models?: string[]
   activeModel?: string | null
   apiKey?: string | null
@@ -62,8 +66,8 @@ const ACP_AGENT_ORDER = ['claude', 'codex', 'gemini', 'opencode'] as const
 
 // Mock ACP Agents data (will be replaced with real data from backend later)
 const MOCK_ACP_AGENTS: AcpAgent[] = [
-  { id: "claude", status: "connected", endpoint: "localhost:7862", protocol: "ACP/1.2", version: "1.0.23", pid: 48210, models: ["sonnet-4", "opus-4"], activeModel: "sonnet-4", apiKey: "sk-ant-···········4f2m", keyStatus: "valid", balance: "$152.30", monthUsage: "$34.20" },
-  { id: "codex", status: "connected", endpoint: "localhost:7863", protocol: "ACP/1.1", version: "0.9.4", pid: 48315, models: ["o3", "o4-mini"], activeModel: "o3", apiKey: "sk-proj-···········x8kn", keyStatus: "valid", balance: "$28.50", monthUsage: "$12.80" },
+  { id: "claude", status: "ready", endpoint: "localhost:7862", protocol: "ACP/1.2", version: "1.0.23", pid: 48210, models: ["sonnet-4", "opus-4"], activeModel: "sonnet-4", apiKey: "sk-ant-···········4f2m", keyStatus: "valid", balance: "$152.30", monthUsage: "$34.20" },
+  { id: "codex", status: "ready", endpoint: "localhost:7863", protocol: "ACP/1.1", version: "0.9.4", pid: 48315, models: ["o3", "o4-mini"], activeModel: "o3", apiKey: "sk-proj-···········x8kn", keyStatus: "valid", balance: "$28.50", monthUsage: "$12.80" },
   { id: "gemini", status: "disconnected", endpoint: "—", protocol: "ACP/1.2", version: "2.1.0", pid: null, models: ["gemini-2.5-pro"], activeModel: "gemini-2.5-pro", apiKey: null, keyStatus: "missing", balance: "—", monthUsage: "—" },
   { id: "opencode", status: "not_installed", endpoint: "—", protocol: "—", version: "—", pid: null, models: [], activeModel: null, apiKey: null, keyStatus: "missing", balance: "—", monthUsage: "—" },
 ]
@@ -105,8 +109,13 @@ function EnvTypeIcon({ envType, size = 16, className = '' }: { envType: Env['typ
 // Badge component for status display
 const Badge = ({ status }: { status: string }) => {
   const m: Record<string, { bg: string; c: string; t: string }> = {
-    connected: { bg: "#4ADE8015", c: "#4ADE80", t: "● 已连接" },
+    ready: { bg: "#4ADE8015", c: "#4ADE80", t: "Ready" },
+    handshaking: { bg: "#FBBF2415", c: "#FBBF24", t: "Handshaking" },
+    starting: { bg: "#FBBF2415", c: "#FBBF24", t: "Starting" },
+    error: { bg: "#F8717112", c: "#F87171", t: "Error" },
+    closed: { bg: "#F8717112", c: "#F87171", t: "Closed" },
     disconnected: { bg: "#FBBF2415", c: "#FBBF24", t: "○ 未连接" },
+    runtime_missing: { bg: "#F8717112", c: "#F87171", t: "缺少 ACP Runtime" },
     not_installed: { bg: "#4e527015", c: "#4e5270", t: "未安装" },
     valid: { bg: "#4ADE8015", c: "#4ADE80", t: "有效" },
     missing: { bg: "#F8717112", c: "#F87171", t: "未配置" },
@@ -121,7 +130,7 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
   const reg = AGENT_REGISTRY[agent.id]
   const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
   const isInstalled = agent.status !== "not_installed"
-  const isConnected = agent.status === "connected"
+  const isConnected = agent.status === "ready"
   const [copied, setCopied] = useState(false)
 
   const copyToClipboard = (text: string) => {
@@ -263,7 +272,20 @@ function RealAgentDetail({
   const reg = AGENT_REGISTRY[agent.id]
   const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
   const isInstalled = agent.status !== 'not_installed'
+  const runtimeMissing = agent.status === 'runtime_missing'
   const [copied, setCopied] = useState(false)
+  const installCommand = agent.installHint || reg.install
+  const statusLabel = agent.status === 'ready'
+    ? 'Ready'
+    : agent.status === 'handshaking'
+      ? 'Handshaking'
+      : runtimeMissing
+        ? 'ACP runtime missing'
+        : 'Installed'
+  const acpState = agent.protocolVersion || agent.protocol || (agent.runtimeSupported ? 'Runtime wired' : 'Runtime missing')
+  const statusNote = runtimeMissing
+    ? 'Base CLI detected, but the ACP runtime or adapter required by ASquink is not installed yet.'
+    : 'This page shows real install status, version, and local process detection. Full ACP handshake, endpoint discovery, and model metadata are not wired in yet.'
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -295,7 +317,7 @@ function RealAgentDetail({
           className="px-3.5 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors inline-flex items-center gap-1.5"
         >
           <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-          Refresh
+          Rescan
         </button>
       </div>
 
@@ -309,9 +331,9 @@ function RealAgentDetail({
             This panel now uses real local detection. Install the CLI first, then refresh to load actual version and runtime status.
           </div>
           <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#08090d] border border-[#1d2030]">
-            <span className="font-mono text-sm text-[#8b8fa7]">$ {reg.install}</span>
+            <span className="font-mono text-sm text-[#8b8fa7]">$ {installCommand}</span>
             <span
-              onClick={() => copyToClipboard(reg.install)}
+              onClick={() => copyToClipboard(installCommand)}
               className="text-[10px] px-2 py-1 rounded bg-[#1b1f2b] font-medium cursor-pointer transition-colors"
               style={{ color: copied ? '#4ADE80' : '#4e5270' }}
             >
@@ -335,7 +357,7 @@ function RealAgentDetail({
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">Runtime</div>
-              <Field label="Status" value={agent.status === 'connected' ? 'Running' : 'Installed'} />
+              <Field label="Status" value={statusLabel} />
               <Field label="Command" value={agent.executable || agent.id} />
               <Field label="Version" value={agent.version || '-'} />
             </div>
@@ -343,32 +365,39 @@ function RealAgentDetail({
             <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4">
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-3">Behavior</div>
               <Field label="View" value="Chat only" />
-              <Field label="ACP" value="Detection only" />
+              <Field label="ACP" value={acpState} />
             </div>
           </div>
 
           <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
             <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-2.5">Status Notes</div>
             <div className="text-[11px] text-[#8b8fa7] leading-relaxed">
-              This page shows real install status, version, and local process detection.
-              Full ACP handshake, endpoint discovery, and model metadata are not wired in yet.
+              {statusNote}
             </div>
           </div>
 
           <div className="bg-[#151820] rounded-xl border border-[#1d2030] p-4 mt-4">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-xs font-medium">Install command</div>
-                <div className="text-[11px] text-[#4e5270] mt-0.5 font-mono">{reg.install}</div>
+                <div className="text-xs font-medium">{runtimeMissing ? 'ACP runtime install' : 'Install command'}</div>
+                <div className="text-[11px] text-[#4e5270] mt-0.5 font-mono">{installCommand}</div>
               </div>
-              <a
-                href={reg.docs}
-                target="_blank"
-                rel="noreferrer"
-                className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs no-underline hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
-              >
-                Docs
-              </a>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => copyToClipboard(installCommand)}
+                  className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs hover:border-[#4ADE80] hover:text-[#4ADE80] transition-colors"
+                >
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+                <a
+                  href={reg.docs}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs no-underline hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+                >
+                  Docs
+                </a>
+              </div>
             </div>
           </div>
         </>
@@ -464,8 +493,8 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     }))
 
     return [...merged].sort((left, right) => {
-      const leftConnected = left.status === 'connected'
-      const rightConnected = right.status === 'connected'
+      const leftConnected = left.status === 'ready'
+      const rightConnected = right.status === 'ready'
 
       if (leftConnected !== rightConnected) {
         return leftConnected ? -1 : 1
@@ -752,13 +781,19 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-[13px] font-medium">{reg.name}</div>
-                        {agent.status === 'connected' && (
+                        {agent.status === 'ready' && (
                           <div className="text-[10px] text-[#4e5270] font-mono mt-0.5">
                             {agent.version || 'Running'}
                           </div>
                         )}
-                        {agent.status === 'disconnected' && (
+                        {false && agent.status === 'runtime_missing' && (
                           <div className="text-[10px] text-[#FBBF24] mt-0.5">已安装，未运行</div>
+                        )}
+                        {agent.status === 'runtime_missing' && (
+                          <div className="text-[10px] text-[#F87171] mt-0.5">CLI detected, ACP runtime missing</div>
+                        )}
+                        {agent.status !== 'ready' && agent.status !== 'not_installed' && agent.status !== 'runtime_missing' && (
+                          <div className="text-[10px] text-[#FBBF24] mt-0.5">ACP runtime installed, not running</div>
                         )}
                         {agent.status === 'not_installed' && (
                           <div className="text-[10px] text-[#4e5270] mt-0.5">未安装</div>

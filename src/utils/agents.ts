@@ -11,6 +11,13 @@ export interface AgentDefinition {
   launchStrategy: AgentLaunchStrategy
 }
 
+export interface AcpRuntimeDefinition {
+  id: string
+  name: string
+  short: string
+  color: string
+}
+
 export const AGENTS: AgentDefinition[] = [
   { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
   { id: 'codex', name: 'Codex', short: 'Codex', color: '#E5E7EB', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
@@ -18,6 +25,13 @@ export const AGENTS: AgentDefinition[] = [
   { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#78716C', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
   { id: 'acp', name: 'ACP Agent', short: 'ACP', color: '#4ADE80', needsProject: true, sessionMode: 'chat', launchStrategy: 'acp' },
   { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#EF4444', needsProject: false, sessionMode: 'chat', launchStrategy: 'cli' },
+]
+
+export const ACP_RUNTIME_AGENTS: AcpRuntimeDefinition[] = [
+  { id: 'claude', name: 'Claude Code ACP', short: 'Claude ACP', color: '#E8915A' },
+  { id: 'codex', name: 'Codex ACP', short: 'Codex ACP', color: '#E5E7EB' },
+  { id: 'gemini', name: 'Gemini ACP', short: 'Gemini ACP', color: '#60A5FA' },
+  { id: 'opencode', name: 'OpenCode ACP', short: 'OpenCode ACP', color: '#78716C' },
 ]
 
 export const PROJECT_AGENTS = AGENTS.filter((agent) => agent.needsProject)
@@ -31,3 +45,6 @@ export const getAgentSessionMode = (agentId?: string | null): AgentSessionMode =
 
 export const shouldAutoLaunchAgent = (agentId?: string | null) =>
   getAgentDefinition(agentId)?.launchStrategy === 'cli'
+
+export const getAcpRuntimeDefinition = (acpAgentId?: string | null) =>
+  acpAgentId ? ACP_RUNTIME_AGENTS.find((agent) => agent.id === acpAgentId) ?? null : null

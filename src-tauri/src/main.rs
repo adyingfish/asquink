@@ -1,20 +1,22 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use session::TerminalSession;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{Manager, State};
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
-use session::TerminalSession;
 
+mod acp;
 mod database;
 mod pty;
 mod session;
 mod ssh;
 mod wsl;
 
+use acp::{AcpCreateSessionResult, AcpManager, AcpPromptResult};
 use database::Database;
 use pty::PtyManager;
 use ssh::{SshAuth, SshSession};
@@ -23,6 +25,7 @@ use wsl::WslManager;
 // App state shared across commands
 pub struct AppState {
     db: Database,
+    acp_manager: AcpManager,
     pty_manager: PtyManager,
     ssh_sessions: Arc<Mutex<HashMap<String, SshSession>>>,
     wsl_manager: WslManager,
@@ -119,6 +122,10 @@ pub struct AcpAgentInfo {
     status: String,
     version: Option<String>,
     pid: Option<u32>,
+    protocol_version: Option<String>,
+    last_error: Option<String>,
+    runtime_supported: bool,
+    install_hint: Option<String>,
 }
 
 fn parse_version_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
@@ -143,7 +150,10 @@ async fn probe_version_with_cmd(executable: &str, args: &[&str]) -> Option<Strin
         command.arg(arg);
     }
 
-    let output = timeout(Duration::from_secs(3), command.output()).await.ok()?.ok()?;
+    let output = timeout(Duration::from_secs(3), command.output())
+        .await
+        .ok()?
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -162,7 +172,10 @@ async fn probe_version_direct(executable: &str, args: &[&str]) -> Option<String>
         command.arg(arg);
     }
 
-    let output = timeout(Duration::from_secs(3), command.output()).await.ok()?.ok()?;
+    let output = timeout(Duration::from_secs(3), command.output())
+        .await
+        .ok()?
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -211,15 +224,22 @@ async fn detect_agent_version(executable: &str) -> Option<String> {
     read_package_version(package_json)
 }
 
-fn get_acp_agent_definitions() -> Vec<(&'static str, &'static str, &'static str)> {
-    vec![
-        ("claude", "Claude Code", "claude"),
-        ("codex", "Codex CLI", "codex"),
-        ("gemini", "Gemini CLI", "gemini"),
-        ("opencode", "OpenCode", "opencode"),
-    ]
+async fn command_exists(executable: &str) -> bool {
+    let which_cmd = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
+
+    tokio::process::Command::new(which_cmd)
+        .arg(executable)
+        .output()
+        .await
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 #[cfg(target_os = "windows")]
 async fn detect_agent_pid(executable: &str) -> Option<u32> {
     let patterns = match executable {
@@ -261,6 +281,7 @@ async fn detect_agent_pid(executable: &str) -> Option<u32> {
         .ok()
 }
 
+#[allow(dead_code)]
 #[cfg(not(target_os = "windows"))]
 async fn detect_agent_pid(_executable: &str) -> Option<u32> {
     None
@@ -302,6 +323,7 @@ pub struct CreateSessionInfo {
     name: Option<String>,
     env_id: Option<String>,
     agent_id: Option<String>,
+    acp_agent_id: Option<String>,
     project_id: Option<String>,
     working_dir: Option<String>,
 }
@@ -315,6 +337,7 @@ fn into_create_session_record(
         name: info.name,
         env_id: info.env_id,
         agent_id: info.agent_id,
+        acp_agent_id: info.acp_agent_id,
         project_id: info.project_id,
         working_dir: info.working_dir,
     }
@@ -332,6 +355,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         db,
+        acp_manager: AcpManager::new(),
         pty_manager: PtyManager::new(),
         ssh_sessions: Arc::new(Mutex::new(HashMap::new())),
         wsl_manager: WslManager::new(),
@@ -354,21 +378,36 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 // API Key management commands
 #[tauri::command]
-async fn save_api_key(state: State<'_, Arc<Mutex<AppState>>>, api_key: String) -> Result<(), String> {
+async fn save_api_key(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    api_key: String,
+) -> Result<(), String> {
     let state = state.lock().await;
-    state.db.set_setting("anthropic_api_key", &api_key).await.map_err(|e| e.to_string())
+    state
+        .db
+        .set_setting("anthropic_api_key", &api_key)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn get_api_key(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Option<String>, String> {
     let state = state.lock().await;
-    state.db.get_setting("anthropic_api_key").await.map_err(|e| e.to_string())
+    state
+        .db
+        .get_setting("anthropic_api_key")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn delete_api_key(state: State<'_, Arc<Mutex<AppState>>>) -> Result<(), String> {
     let state = state.lock().await;
-    state.db.delete_setting("anthropic_api_key").await.map_err(|e| e.to_string())
+    state
+        .db
+        .delete_setting("anthropic_api_key")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // Environment management commands
@@ -403,10 +442,7 @@ async fn create_env(
             let req_port = req.port.unwrap_or(22);
             let req_user = req.username.as_deref().unwrap_or("");
 
-            if existing_host == req_host
-                && existing_port == req_port
-                && existing_user == req_user
-            {
+            if existing_host == req_host && existing_port == req_port && existing_user == req_user {
                 return Err(format!(
                     "SSH 环境 {}@{}:{} 已存在",
                     req_user, req_host, req_port
@@ -432,7 +468,11 @@ async fn create_env(
     }
 
     let id = uuid::Uuid::new_v4().to_string();
-    state.db.create_env(&id, &req).await.map_err(|e| e.to_string())?;
+    state
+        .db
+        .create_env(&id, &req)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -443,7 +483,10 @@ async fn delete_env(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Resul
 }
 
 #[tauri::command]
-async fn check_env_status(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Result<String, String> {
+async fn check_env_status(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    id: String,
+) -> Result<String, String> {
     let state = state.lock().await;
 
     // Get env config
@@ -482,15 +525,22 @@ async fn check_env_status(state: State<'_, Arc<Mutex<AppState>>>, id: String) ->
         let addr = format!("{}:{}", host, port);
         match tokio::time::timeout(
             std::time::Duration::from_secs(3),
-            tokio::net::TcpStream::connect(&addr)
-        ).await {
+            tokio::net::TcpStream::connect(&addr),
+        )
+        .await
+        {
             Ok(Ok(_)) => "online",
             _ => "offline",
-        }.to_string()
+        }
+        .to_string()
     };
 
     // Update status in database
-    state.db.update_env_status(&id, &status).await.map_err(|e| e.to_string())?;
+    state
+        .db
+        .update_env_status(&id, &status)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(status)
 }
@@ -509,7 +559,11 @@ async fn create_server(
 ) -> Result<String, String> {
     let state = state.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
-    state.db.create_server(&id, &req).await.map_err(|e| e.to_string())?;
+    state
+        .db
+        .create_server(&id, &req)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -533,7 +587,11 @@ async fn create_project(
 ) -> Result<String, String> {
     let state = state.lock().await;
     let id = uuid::Uuid::new_v4().to_string();
-    state.db.create_project(&id, &req).await.map_err(|e| e.to_string())?;
+    state
+        .db
+        .create_project(&id, &req)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -544,19 +602,31 @@ async fn update_project(
     req: CreateProjectRequest,
 ) -> Result<(), String> {
     let state = state.lock().await;
-    state.db.update_project(&id, &req).await.map_err(|e| e.to_string())
+    state
+        .db
+        .update_project(&id, &req)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn delete_project(state: State<'_, Arc<Mutex<AppState>>>, id: String) -> Result<(), String> {
     let state = state.lock().await;
-    state.db.delete_project(&id).await.map_err(|e| e.to_string())
+    state
+        .db
+        .delete_project(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // Agent management commands
 #[tauri::command]
 async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
-    let which_cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
+    let which_cmd = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
     let output = tokio::process::Command::new(which_cmd)
         .arg(&agent)
         .output()
@@ -564,7 +634,11 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
         .map_err(|e| e.to_string())?;
 
     let installed = output.status.success();
-    let version = if installed { detect_agent_version(&agent).await } else { None };
+    let version = if installed {
+        detect_agent_version(&agent).await
+    } else {
+        None
+    };
 
     Ok(AgentStatus { installed, version })
 }
@@ -572,7 +646,11 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
 #[tauri::command]
 async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
     let agents = get_agent_definitions();
-    let which_cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
+    let which_cmd = if cfg!(target_os = "windows") {
+        "where"
+    } else {
+        "which"
+    };
     let mut result = Vec::new();
 
     for (id, name, executable) in agents {
@@ -582,7 +660,11 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
             .await;
 
         let installed = output.map(|o| o.status.success()).unwrap_or(false);
-        let version = if installed { detect_agent_version(executable).await } else { None };
+        let version = if installed {
+            detect_agent_version(executable).await
+        } else {
+            None
+        };
 
         result.push(AgentInfo {
             id: id.to_string(),
@@ -597,34 +679,65 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
 }
 
 #[tauri::command]
-async fn list_acp_agents() -> Result<Vec<AcpAgentInfo>, String> {
-    let which_cmd = if cfg!(target_os = "windows") { "where" } else { "which" };
+async fn list_acp_agents(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<AcpAgentInfo>, String> {
+    let acp_manager = {
+        let state = state.lock().await;
+        state.acp_manager.clone()
+    };
+    let runtime_summary = acp_manager.runtime_summary().await;
     let mut result = Vec::new();
 
-    for (id, name, executable) in get_acp_agent_definitions() {
-        let output = tokio::process::Command::new(which_cmd)
-            .arg(executable)
-            .output()
-            .await;
-
-        let installed = output.map(|o| o.status.success()).unwrap_or(false);
-        let version = if installed { detect_agent_version(executable).await } else { None };
-        let pid = if installed { detect_agent_pid(executable).await } else { None };
+    for definition in acp::acp_runtime_definitions() {
+        let runtime_state = runtime_summary.get(definition.id);
+        let installed = command_exists(definition.install_probe).await;
+        let runtime_supported =
+            runtime_state.is_some() || command_exists(definition.runtime_probe).await;
+        let version =
+            if let Some(version) = runtime_state.and_then(|state| state.runtime_version.clone()) {
+                Some(version)
+            } else if installed {
+                detect_agent_version(definition.install_probe).await
+            } else {
+                None
+            };
+        let pid = runtime_state.and_then(|state| state.pid);
         let status = if !installed {
             "not_installed"
-        } else if pid.is_some() {
-            "connected"
+        } else if !runtime_supported {
+            "runtime_missing"
+        } else if let Some(state) = runtime_state {
+            state.status.as_str()
         } else {
             "disconnected"
         };
+        let executable = if runtime_supported {
+            definition.executable_display
+        } else {
+            definition.install_probe
+        };
 
         result.push(AcpAgentInfo {
-            id: id.to_string(),
-            name: name.to_string(),
+            id: definition.id.to_string(),
+            name: definition.name.to_string(),
             executable: executable.to_string(),
             status: status.to_string(),
             version,
             pid,
+            protocol_version: runtime_state.and_then(|state| state.protocol_version.clone()),
+            last_error: runtime_state.and_then(|state| state.last_error.clone()),
+            runtime_supported,
+            install_hint: Some(
+                if !installed {
+                    definition.install_hint
+                } else {
+                    definition
+                        .runtime_install_hint
+                        .unwrap_or(definition.install_hint)
+                }
+                .to_string(),
+            ),
         });
     }
 
@@ -632,7 +745,101 @@ async fn list_acp_agents() -> Result<Vec<AcpAgentInfo>, String> {
 }
 
 #[tauri::command]
-async fn scan_agents_for_env(state: State<'_, Arc<Mutex<AppState>>>, env_id: String) -> Result<Vec<AgentInfo>, String> {
+async fn create_acp_session(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+    acp_agent_id: String,
+    working_dir: Option<String>,
+    session_info: Option<CreateSessionInfo>,
+    app_handle: tauri::AppHandle,
+) -> Result<AcpCreateSessionResult, String> {
+    let (db, acp_manager) = {
+        let state = state.lock().await;
+        (state.db.clone(), state.acp_manager.clone())
+    };
+
+    let resolved_working_dir = working_dir
+        .or_else(|| {
+            session_info
+                .as_ref()
+                .and_then(|info| info.working_dir.clone())
+        })
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .and_then(|dir| dir.to_str().map(|value| value.to_string()))
+        })
+        .ok_or("ACP session requires a working directory".to_string())?;
+
+    let result = acp_manager
+        .create_session(
+            session_id.clone(),
+            acp_agent_id,
+            resolved_working_dir.clone(),
+            db.clone(),
+            app_handle,
+        )
+        .await?;
+
+    if let Some(info) = session_info {
+        let record = into_create_session_record(session_id.clone(), info);
+        if let Err(err) = db.create_session(&record).await {
+            let _ = acp_manager.close_session(&session_id).await;
+            return Err(err.to_string());
+        }
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn send_acp_message(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+    content: String,
+) -> Result<AcpPromptResult, String> {
+    let acp_manager = {
+        let state = state.lock().await;
+        state.acp_manager.clone()
+    };
+
+    acp_manager.send_message(&session_id, content).await
+}
+
+#[tauri::command]
+async fn close_acp_session(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+) -> Result<(), String> {
+    let (db, acp_manager) = {
+        let state = state.lock().await;
+        (state.db.clone(), state.acp_manager.clone())
+    };
+
+    acp_manager.close_session(&session_id).await?;
+    db.end_session(&session_id)
+        .await
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+async fn list_session_messages(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+) -> Result<Vec<database::MessageRecord>, String> {
+    let (db, acp_manager) = {
+        let state = state.lock().await;
+        (state.db.clone(), state.acp_manager.clone())
+    };
+
+    acp_manager.list_messages(&db, &session_id).await
+}
+
+#[tauri::command]
+async fn scan_agents_for_env(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    env_id: String,
+) -> Result<Vec<AgentInfo>, String> {
     let state = state.lock().await;
     let env = state.db.get_env(&env_id).await.map_err(|e| e.to_string())?;
 
@@ -644,7 +851,9 @@ async fn scan_agents_for_env(state: State<'_, Arc<Mutex<AppState>>>, env_id: Str
         // For WSL env, scan inside the WSL distro
         let distro = env.wsl_distro.ok_or("WSL distribution not configured")?;
         let user = env.wsl_user.as_deref();
-        wsl::scan_agents_in_distro(&distro, user).await.map_err(|e| e.to_string())
+        wsl::scan_agents_in_distro(&distro, user)
+            .await
+            .map_err(|e| e.to_string())
     } else {
         // For SSH or other env types, return empty result for now
         Ok(Vec::new())
@@ -666,16 +875,27 @@ async fn launch_agent(
 
     // Write to session based on type
     if session_type == "local" {
-        state.pty_manager.write(&session_id, cmd.as_bytes()).await.map_err(|e| e.to_string())
+        state
+            .pty_manager
+            .write(&session_id, cmd.as_bytes())
+            .await
+            .map_err(|e| e.to_string())
     } else if session_type == "ssh" {
         let sessions = state.ssh_sessions.lock().await;
         if let Some(session) = sessions.get(&session_id) {
-            session.write(cmd.as_bytes()).await.map_err(|e| e.to_string())
+            session
+                .write(cmd.as_bytes())
+                .await
+                .map_err(|e| e.to_string())
         } else {
             Err("SSH session not found".to_string())
         }
     } else if session_type == "wsl" {
-        state.wsl_manager.write(&session_id, cmd.as_bytes()).await.map_err(|e| e.to_string())
+        state
+            .wsl_manager
+            .write(&session_id, cmd.as_bytes())
+            .await
+            .map_err(|e| e.to_string())
     } else {
         Err("Unknown session type".to_string())
     }
@@ -694,12 +914,20 @@ async fn create_local_session(
     app_handle: tauri::AppHandle,
 ) -> Result<String, String> {
     let state = state.lock().await;
-    state.pty_manager.create_session(&session_id, shell, cols, rows, working_dir, app_handle).await.map_err(|e| e.to_string())?;
+    state
+        .pty_manager
+        .create_session(&session_id, shell, cols, rows, working_dir, app_handle)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Save session to database if info provided
     if let Some(info) = session_info {
         let record = into_create_session_record(session_id.clone(), info);
-        state.db.create_session(&record).await.map_err(|e| e.to_string())?;
+        state
+            .db
+            .create_session(&record)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(session_id)
@@ -718,7 +946,11 @@ async fn create_ssh_session(
     let state = state.lock().await;
 
     // Get server/env config from database
-    let env = state.db.get_env(&req.server_id).await.map_err(|e| e.to_string())?;
+    let env = state
+        .db
+        .get_env(&req.server_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Determine auth method
     let auth = if env.auth_type.as_deref() == Some("password") {
@@ -727,7 +959,9 @@ async fn create_ssh_session(
             None => return Err("Password required".to_string()),
         }
     } else {
-        let key_path = env.private_key_path.ok_or("Private key path not configured")?;
+        let key_path = env
+            .private_key_path
+            .ok_or("Private key path not configured")?;
         SshAuth::PrivateKey {
             path: key_path,
             passphrase: env.passphrase,
@@ -748,14 +982,24 @@ async fn create_ssh_session(
         cols,
         rows,
         app_handle,
-    ).await.map_err(|e| e.to_string())?;
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
-    state.ssh_sessions.lock().await.insert(session_id.clone(), session);
+    state
+        .ssh_sessions
+        .lock()
+        .await
+        .insert(session_id.clone(), session);
 
     // Save session to database if info provided
     if let Some(info) = session_info {
         let record = into_create_session_record(session_id.clone(), info);
-        state.db.create_session(&record).await.map_err(|e| e.to_string())?;
+        state
+            .db
+            .create_session(&record)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(session_id)
@@ -764,7 +1008,9 @@ async fn create_ssh_session(
 // WSL-specific commands
 #[tauri::command]
 async fn list_wsl_distros() -> Result<Vec<wsl::WslDistro>, String> {
-    wsl::WslManager::list_distros().await.map_err(|e| e.to_string())
+    wsl::WslManager::list_distros()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -793,20 +1039,28 @@ async fn create_wsl_session(
     let user = env.wsl_user.as_deref();
 
     // Create WSL session
-    state.wsl_manager.create_session(
-        &session_id,
-        &distro,
-        user,
-        cols,
-        rows,
-        working_dir,
-        app_handle,
-    ).await.map_err(|e| e.to_string())?;
+    state
+        .wsl_manager
+        .create_session(
+            &session_id,
+            &distro,
+            user,
+            cols,
+            rows,
+            working_dir,
+            app_handle,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
     // Save session to database if info provided
     if let Some(info) = session_info {
         let record = into_create_session_record(session_id.clone(), info);
-        state.db.create_session(&record).await.map_err(|e| e.to_string())?;
+        state
+            .db
+            .create_session(&record)
+            .await
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(session_id)
@@ -822,16 +1076,27 @@ async fn write_to_session(
     let state = state.lock().await;
 
     if session_type == "local" {
-        state.pty_manager.write(&session_id, data.as_bytes()).await.map_err(|e| e.to_string())
+        state
+            .pty_manager
+            .write(&session_id, data.as_bytes())
+            .await
+            .map_err(|e| e.to_string())
     } else if session_type == "ssh" {
         let sessions = state.ssh_sessions.lock().await;
         if let Some(session) = sessions.get(&session_id) {
-            session.write(data.as_bytes()).await.map_err(|e| e.to_string())
+            session
+                .write(data.as_bytes())
+                .await
+                .map_err(|e| e.to_string())
         } else {
             Err("SSH session not found".to_string())
         }
     } else if session_type == "wsl" {
-        state.wsl_manager.write(&session_id, data.as_bytes()).await.map_err(|e| e.to_string())
+        state
+            .wsl_manager
+            .write(&session_id, data.as_bytes())
+            .await
+            .map_err(|e| e.to_string())
     } else {
         Err("Unknown session type".to_string())
     }
@@ -848,7 +1113,11 @@ async fn resize_session(
     let state = state.lock().await;
 
     if session_type == "local" {
-        state.pty_manager.resize(&session_id, cols, rows).await.map_err(|e| e.to_string())
+        state
+            .pty_manager
+            .resize(&session_id, cols, rows)
+            .await
+            .map_err(|e| e.to_string())
     } else if session_type == "ssh" {
         let sessions = state.ssh_sessions.lock().await;
         if let Some(session) = sessions.get(&session_id) {
@@ -857,7 +1126,11 @@ async fn resize_session(
             Err("SSH session not found".to_string())
         }
     } else if session_type == "wsl" {
-        state.wsl_manager.resize(&session_id, cols, rows).await.map_err(|e| e.to_string())
+        state
+            .wsl_manager
+            .resize(&session_id, cols, rows)
+            .await
+            .map_err(|e| e.to_string())
     } else {
         Err("Unknown session type".to_string())
     }
@@ -872,47 +1145,77 @@ async fn close_session(
     let state = state.lock().await;
 
     if session_type == "local" {
-        state.pty_manager.close_session(&session_id).await.map_err(|e| e.to_string())?
+        state
+            .pty_manager
+            .close_session(&session_id)
+            .await
+            .map_err(|e| e.to_string())?
     } else if session_type == "ssh" {
         let mut sessions = state.ssh_sessions.lock().await;
         if let Some(mut session) = sessions.remove(&session_id) {
             session.close().await.map_err(|e| e.to_string())?
         }
     } else if session_type == "wsl" {
-        state.wsl_manager.close_session(&session_id).await.map_err(|e| e.to_string())?
+        state
+            .wsl_manager
+            .close_session(&session_id)
+            .await
+            .map_err(|e| e.to_string())?
     } else {
-        return Err("Unknown session type".to_string())
+        return Err("Unknown session type".to_string());
     }
 
     // Update ended_at in database
-    state.db.end_session(&session_id).await.map_err(|e| e.to_string())?;
+    state
+        .db
+        .end_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     Ok(())
 }
 
 // Session history management commands
 #[tauri::command]
-async fn list_sessions(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<database::SessionRecord>, String> {
+async fn list_sessions(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<database::SessionRecord>, String> {
     let state = state.lock().await;
     state.db.list_sessions().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn delete_session_record(state: State<'_, Arc<Mutex<AppState>>>, session_id: String) -> Result<(), String> {
+async fn delete_session_record(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+) -> Result<(), String> {
     let state = state.lock().await;
-    state.db.delete_session(&session_id).await.map_err(|e| e.to_string())
+    state
+        .db
+        .delete_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn debug_sessions(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<database::SessionRecord>, String> {
+async fn debug_sessions(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<database::SessionRecord>, String> {
     let state = state.lock().await;
     state.db.list_sessions().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-async fn reopen_session(state: State<'_, Arc<Mutex<AppState>>>, session_id: String) -> Result<(), String> {
+async fn reopen_session(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+) -> Result<(), String> {
     let state = state.lock().await;
-    state.db.reopen_session(&session_id).await.map_err(|e| e.to_string())
+    state
+        .db
+        .reopen_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -943,6 +1246,9 @@ fn main() {
             check_agent_installed,
             scan_agents,
             list_acp_agents,
+            create_acp_session,
+            send_acp_message,
+            close_acp_session,
             scan_agents_for_env,
             launch_agent,
             // Sessions
@@ -953,6 +1259,7 @@ fn main() {
             resize_session,
             close_session,
             list_sessions,
+            list_session_messages,
             delete_session_record,
             reopen_session,
             debug_sessions,

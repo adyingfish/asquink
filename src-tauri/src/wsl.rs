@@ -1,11 +1,11 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
-use tauri::Emitter;
 
 use crate::session::{SessionStatus, TerminalSession};
 
@@ -54,10 +54,11 @@ impl WslManager {
 
         // WSL output is in UTF-16LE on Windows
         let stdout = String::from_utf16_lossy(
-            &output.stdout
+            &output
+                .stdout
                 .chunks(2)
                 .map(|chunk| u16::from_le_bytes([chunk[0], chunk.get(1).copied().unwrap_or(0)]))
-                .collect::<Vec<u16>>()
+                .collect::<Vec<u16>>(),
         );
 
         parse_wsl_list(&stdout)
@@ -108,15 +109,18 @@ impl WslManager {
         }
 
         // Set working directory - default to ~ (user's home) if not specified
-        let wsl_path = working_dir.as_ref().map(|dir| {
-            // Convert Windows path to WSL path if needed
-            if dir.contains(':') {
-                // Windows path like C:\Users\... -> /mnt/c/Users/...
-                self::windows_to_wsl_path(dir)
-            } else {
-                dir.clone()
-            }
-        }).unwrap_or_else(|| "~".to_string());
+        let wsl_path = working_dir
+            .as_ref()
+            .map(|dir| {
+                // Convert Windows path to WSL path if needed
+                if dir.contains(':') {
+                    // Windows path like C:\Users\... -> /mnt/c/Users/...
+                    self::windows_to_wsl_path(dir)
+                } else {
+                    dir.clone()
+                }
+            })
+            .unwrap_or_else(|| "~".to_string());
 
         cmd.arg("--cd");
         cmd.arg(&wsl_path);
@@ -136,7 +140,10 @@ impl WslManager {
             app_handle,
         )?;
 
-        self.sessions.lock().await.insert(id.to_string(), Box::new(session));
+        self.sessions
+            .lock()
+            .await
+            .insert(id.to_string(), Box::new(session));
         Ok(())
     }
 
@@ -248,7 +255,8 @@ impl TerminalSession for WslSession {
 fn parse_wsl_list(output: &str) -> Result<Vec<WslDistro>> {
     let mut distros = Vec::new();
 
-    for line in output.lines().skip(1) {  // Skip header line
+    for line in output.lines().skip(1) {
+        // Skip header line
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -262,7 +270,8 @@ fn parse_wsl_list(output: &str) -> Result<Vec<WslDistro>> {
 
             if let Some(name) = parts.get(name_idx) {
                 let state = parts.get(name_idx + 1).unwrap_or(&"Unknown").to_string();
-                let version = parts.get(name_idx + 2)
+                let version = parts
+                    .get(name_idx + 2)
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(2);
 
@@ -299,7 +308,10 @@ fn windows_to_wsl_path(path: &str) -> String {
 }
 
 /// Scan for agents in a WSL distribution
-pub async fn scan_agents_in_distro(distro: &str, user: Option<&str>) -> Result<Vec<crate::AgentInfo>> {
+pub async fn scan_agents_in_distro(
+    distro: &str,
+    user: Option<&str>,
+) -> Result<Vec<crate::AgentInfo>> {
     let agents = crate::get_agent_definitions();
     let mut result = Vec::new();
 
@@ -339,7 +351,9 @@ pub async fn scan_agents_in_distro(distro: &str, user: Option<&str>) -> Result<V
 
             version_output.and_then(|o| {
                 if o.status.success() {
-                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                    String::from_utf8(o.stdout)
+                        .ok()
+                        .map(|s| s.trim().to_string())
                 } else {
                     None
                 }
@@ -367,7 +381,10 @@ mod tests {
     #[test]
     fn test_windows_to_wsl_path() {
         assert_eq!(windows_to_wsl_path("C:\\Users\\test"), "/mnt/c/Users/test");
-        assert_eq!(windows_to_wsl_path("D:\\Projects\\myapp"), "/mnt/d/Projects/myapp");
+        assert_eq!(
+            windows_to_wsl_path("D:\\Projects\\myapp"),
+            "/mnt/d/Projects/myapp"
+        );
         assert_eq!(windows_to_wsl_path("/home/user"), "/home/user");
     }
 }

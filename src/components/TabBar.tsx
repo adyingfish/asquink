@@ -1,6 +1,6 @@
 import { Command, MessageSquareText, Monitor, X } from 'lucide-react'
 import type { Session } from '../App'
-import { getAgentDefinition } from '../utils/agents'
+import { getAcpRuntimeDefinition, getAgentDefinition } from '../utils/agents'
 
 interface TabBarProps {
   sessions: Session[]
@@ -15,7 +15,7 @@ const isPureTerminalSession = (session: Session) => !hasProjectContext(session) 
 
 const getSessionTypeLabel = (session: Session) => {
   if (isPureTerminalSession(session)) return 'PTY'
-  if (session.agentId === 'acp') return 'ACP'
+  if (session.agentId === 'acp') return getAcpRuntimeDefinition(session.acpAgentId)?.short || 'ACP'
   if (session.mode === 'chat') return 'CHAT'
   return 'AGENT'
 }
@@ -60,7 +60,13 @@ const getSessionTypeTint = (session: Session) => {
 
 export default function TabBar({ sessions, activeSessionId, onSelectSession, onCloseSession }: TabBarProps) {
   const getTabTitle = (session: Session) => {
-    const agent = getAgentDefinition(session.agentId)
+    const agent = session.agentId === 'acp'
+      ? {
+          name: getAcpRuntimeDefinition(session.acpAgentId)?.name || 'ACP Agent',
+          short: getAcpRuntimeDefinition(session.acpAgentId)?.short || 'ACP',
+          color: getAcpRuntimeDefinition(session.acpAgentId)?.color || '#4ADE80',
+        }
+      : getAgentDefinition(session.agentId)
 
     if (hasProjectContext(session)) {
       return {

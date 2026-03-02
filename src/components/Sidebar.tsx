@@ -20,7 +20,20 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { Session, Env, Project, AgentInfo } from '../App'
-import { AGENTS, CHAT_AGENTS, PROJECT_AGENTS, getAgentDefinition, getAgentSessionMode, shouldAutoLaunchAgent } from '../utils/agents'
+import { AGENTS, CHAT_AGENTS, PROJECT_AGENTS, getAcpRuntimeDefinition, getAgentDefinition, getAgentSessionMode, shouldAutoLaunchAgent } from '../utils/agents'
+
+interface AcpAgentInfo {
+  id: string
+  name: string
+  executable: string
+  status: 'ready' | 'handshaking' | 'starting' | 'error' | 'closed' | 'disconnected' | 'not_installed' | 'runtime_missing'
+  version?: string | null
+  pid?: number | null
+  protocolVersion?: string | null
+  lastError?: string | null
+  runtimeSupported: boolean
+  installHint?: string | null
+}
 
 interface SidebarProps {
   onAddSession: (session: Session) => void
@@ -47,6 +60,14 @@ const getProjectNameFromPath = (value: string) => {
 const hasProjectContext = (session: Session) => Boolean(session.projectId || session.projectName || session.projectPath)
 
 const isPureTerminalSession = (session: Session) => !hasProjectContext(session) && !session.agentId
+
+const getSessionAgentDisplayName = (session: Session) => {
+  if (session.agentId === 'acp') {
+    return getAcpRuntimeDefinition(session.acpAgentId)?.name || 'ACP Agent'
+  }
+
+  return AGENTS.find((agent) => agent.id === session.agentId)?.name
+}
 
 type SessionIntent = 'project' | 'chat' | 'terminal'
 type NewSessionStep = 'intent' | 'project' | 'agent' | 'env'
@@ -152,6 +173,55 @@ export default function Sidebar({
   }
 
   // 创建本地会话（带 Agent 和可选项目）
+  const createAcpSession = async (env: Env, acpAgentId: string | null, project?: Project) => {
+    if (!project?.path) {
+      setError('ACP session requires a project working directory')
+      return
+    }
+    if (!acpAgentId) {
+      setError('Please choose a concrete ACP agent')
+      return
+    }
+
+    const sessionId = `acp-${Date.now()}`
+
+    onAddSession({
+      id: sessionId,
+      name: env.name,
+      type: env.type,
+      envId: env.id,
+      agentId: 'acp',
+      acpAgentId,
+      projectId: project.id,
+      projectName: project.name,
+      projectPath: project.path,
+      status: 'connecting',
+      mode: 'chat',
+      statusText: 'ACP handshaking...',
+    })
+
+    try {
+      await invoke('create_acp_session', {
+        sessionId,
+        acpAgentId,
+        workingDir: project.path,
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          agentId: 'acp',
+          acpAgentId,
+          projectId: project.id,
+          workingDir: project.path,
+        },
+      })
+      onSessionStatusChange?.(sessionId, 'connected')
+    } catch (error) {
+      console.error('Failed to create ACP session:', error)
+      onSessionStatusChange?.(sessionId, 'disconnected')
+      setError('Failed to create ACP session: ' + error)
+    }
+  }
+
   const createLocalSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
     const id = `local-${Date.now()}`
 
@@ -336,8 +406,10 @@ export default function Sidebar({
   }
 
   // 创建会话的主入口
-  const createSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
-    if (env.type === 'local') {
+  const createSessionWithAgent = async (env: Env, agentId: string | null, project?: Project, acpAgentId?: string | null) => {
+    if (agentId === 'acp') {
+      await createAcpSession(env, acpAgentId || null, project)
+    } else if (env.type === 'local') {
       await createLocalSessionWithAgent(env, agentId, project)
     } else if (env.type === 'wsl') {
       await createWslSessionWithAgent(env, agentId, project)
@@ -396,7 +468,7 @@ export default function Sidebar({
     const sessionMatch = envSessions.some(s =>
       s.projectName?.toLowerCase().includes(query) ||
       s.lastMsg?.toLowerCase().includes(query) ||
-      AGENTS.find(a => a.id === s.agentId)?.name.toLowerCase().includes(query)
+      getSessionAgentDisplayName(s)?.toLowerCase().includes(query)
     )
     const envProjects = projects.filter(p => p.env_id === env.id)
     const projectMatch = envProjects.some(p =>
@@ -873,8 +945,8 @@ export default function Sidebar({
           envs={envs}
           projects={projects}
           onClose={() => setShowNewSession(false)}
-          onCreateSession={(env, agentId, project) => {
-            createSessionWithAgent(env, agentId, project)
+          onCreateSession={(env, agentId, project, acpAgentId) => {
+            createSessionWithAgent(env, agentId, project, acpAgentId)
             setShowNewSession(false)
           }}
           onCreateSshSession={(env, agentId, project, password) => {
@@ -954,7 +1026,8 @@ export default function Sidebar({
 function SessionBadge({ s }: { s: Session }) {
   const isTerm = !hasProjectContext(s) && !s.agentId
   const isAcp = s.agentId === 'acp'
-  const label = isTerm ? 'PTY' : (isAcp ? 'ACP' : (s.mode === 'chat' ? 'CHAT' : 'AGENT'))
+  const acpLabel = getAcpRuntimeDefinition(s.acpAgentId)?.short || 'ACP'
+  const label = isTerm ? 'PTY' : (isAcp ? acpLabel : (s.mode === 'chat' ? 'CHAT' : 'AGENT'))
   const color = isTerm ? '#FBBF24' : (isAcp ? '#4ADE80' : (s.mode === 'chat' ? '#C084FC' : '#60A5FA'))
   const background = isTerm
     ? 'rgba(251, 191, 36, 0.08)'
@@ -1202,31 +1275,36 @@ function NewSessionModal({
   envs: Env[]
   projects: Project[]
   onClose: () => void
-  onCreateSession: (env: Env, agentId: string | null, project?: Project) => void
+  onCreateSession: (env: Env, agentId: string | null, project?: Project, acpAgentId?: string | null) => void
   onCreateSshSession: (env: Env, agentId: string | null, project?: Project, password?: string) => void
 }) {
   const [step, setStep] = useState<NewSessionStep>('intent')
   const [intent, setIntent] = useState<SessionIntent | null>(null)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [selectedAcpAgentId, setSelectedAcpAgentId] = useState<string | null>(null)
   const [selectedEnv, setSelectedEnv] = useState<Env | null>(null)
   const [browsing, setBrowsing] = useState(false)
   const [browseEnv, setBrowseEnv] = useState<Env | null>(null)
   const [browseDir, setBrowseDir] = useState('')
   const [browseProjectName, setBrowseProjectName] = useState('')
   const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
+  const [acpAgents, setAcpAgents] = useState<AcpAgentInfo[] | null>(null)
   const [scanningAgents, setScanningAgents] = useState(false)
 
   const scanAgents = async () => {
-    // Only scan for local environment for now
-    // For SSH/WSL, we need a connected session to scan
     setScanningAgents(true)
     try {
-      const agents = await invoke<AgentInfo[]>('scan_agents')
+      const [agents, acp] = await Promise.all([
+        invoke<AgentInfo[]>('scan_agents'),
+        invoke<AcpAgentInfo[]>('list_acp_agents'),
+      ])
       setDetectedAgents(agents)
+      setAcpAgents(acp)
     } catch (error) {
       console.error('Failed to scan agents:', error)
       setDetectedAgents(null)
+      setAcpAgents(null)
     } finally {
       setScanningAgents(false)
     }
@@ -1237,12 +1315,14 @@ function NewSessionModal({
     setIntent(null)
     setSelectedProject(null)
     setSelectedAgent(null)
+    setSelectedAcpAgentId(null)
     setSelectedEnv(null)
     setBrowsing(false)
     setBrowseEnv(null)
     setBrowseDir('')
     setBrowseProjectName('')
     setDetectedAgents(null)
+    setAcpAgents(null)
   }
 
   const goBack = () => {
@@ -1256,6 +1336,7 @@ function NewSessionModal({
     if (step === 'agent' && intent === 'project') {
       setStep('project')
       setSelectedAgent(null)
+      setSelectedAcpAgentId(null)
       return
     }
     reset()
@@ -1281,11 +1362,8 @@ function NewSessionModal({
     const env = envs.find(e => e.id === p.env_id)
     if (env) {
       setSelectedEnv(env)
-      // Scan agents when selecting a local environment
-      if (env.type === 'local') {
-        scanAgents()
-      }
     }
+    scanAgents()
     setStep('agent')
   }
 
@@ -1306,6 +1384,7 @@ function NewSessionModal({
       setBrowsing(false)
       setBrowseDir('')
       setBrowseProjectName('')
+      scanAgents()
       setStep('agent')
     } catch (err) {
       console.error('Failed to create project:', err)
@@ -1336,12 +1415,12 @@ function NewSessionModal({
       onCreateSession(env, selectedAgent)
     } else if (intent === 'project' && selectedAgent) {
       if (!selectedEnv) return
-      onCreateSession(selectedEnv, selectedAgent, selectedProject || undefined)
+      onCreateSession(selectedEnv, selectedAgent, selectedProject || undefined, selectedAcpAgentId)
     }
   }
 
   const canLaunch =
-    (intent === 'project' && selectedProject && selectedAgent) ||
+    (intent === 'project' && selectedProject && selectedAgent && (selectedAgent !== 'acp' || !!selectedAcpAgentId)) ||
     (intent === 'chat' && selectedAgent) ||
     (intent === 'terminal' && selectedEnv)
 
@@ -1350,8 +1429,13 @@ function NewSessionModal({
     if (selectedEnv) parts.push(selectedEnv.name)
     if (selectedProject) parts.push(selectedProject.name)
     if (selectedAgent) {
-      const agent = getAgentDefinition(selectedAgent)
-      if (agent) parts.push(agent.name)
+      if (selectedAgent === 'acp') {
+        const acpAgent = acpAgents?.find((agent) => agent.id === selectedAcpAgentId)
+        parts.push(acpAgent?.name || getAcpRuntimeDefinition(selectedAcpAgentId)?.name || 'ACP Agent')
+      } else {
+        const agent = getAgentDefinition(selectedAgent)
+        if (agent) parts.push(agent.name)
+      }
     }
     if (intent === 'terminal') parts.push('纯终端')
     return parts.join('  ›  ')
@@ -1410,7 +1494,7 @@ function NewSessionModal({
               <>
                 <span>›</span>
                 <span
-                  onClick={() => { setStep('project'); setSelectedAgent(null); }}
+                  onClick={() => { setStep('project'); setSelectedAgent(null); setSelectedAcpAgentId(null) }}
                   className="cursor-pointer hover:text-[#E8915A]"
                 >
                   {selectedProject.name}
@@ -1421,7 +1505,9 @@ function NewSessionModal({
               <>
                 <span>›</span>
                 <span style={{ color: getAgentDefinition(selectedAgent)?.color }}>
-                  {getAgentDefinition(selectedAgent)?.name}
+                  {selectedAgent === 'acp'
+                    ? (acpAgents?.find((agent) => agent.id === selectedAcpAgentId)?.name || 'ACP Agent')
+                    : getAgentDefinition(selectedAgent)?.name}
                 </span>
               </>
             )}
@@ -1572,13 +1658,31 @@ function NewSessionModal({
                   <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
                 )}
               </div>
-              {PROJECT_AGENTS.map((a) => (
+              {PROJECT_AGENTS.filter((agent) => agent.id !== 'acp').map((a) => (
                 <AgentCard
                   key={a.id}
                   agent={a}
                   selected={selectedAgent === a.id}
-                  onClick={() => setSelectedAgent(a.id)}
+                  onClick={() => {
+                    setSelectedAgent(a.id)
+                    setSelectedAcpAgentId(null)
+                  }}
                   detectedInfo={detectedAgents?.find(d => d.id === a.id)}
+                />
+              ))}
+              <div className="h-px bg-[#1d2030] my-3" />
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">ACP Agents</div>
+              <div className="text-[11px] text-[#4e5270] mb-2">选择一个已安装的 ACP runtime，并以 chat 模式在当前项目目录中启动。</div>
+              {(acpAgents || []).map((agent) => (
+                <AcpAgentCard
+                  key={agent.id}
+                  agent={agent}
+                  selected={selectedAgent === 'acp' && selectedAcpAgentId === agent.id}
+                  onClick={() => {
+                    if (agent.status === 'not_installed' || !agent.runtimeSupported) return
+                    setSelectedAgent('acp')
+                    setSelectedAcpAgentId(agent.id)
+                  }}
                 />
               ))}
             </>
@@ -1698,6 +1802,58 @@ function IntentCard({ icon: Icon, title, desc, onClick }: { icon: LucideIcon; ti
         <div className="text-[12px] text-[#4e5270] mt-0.5">{desc}</div>
       </div>
       <ChevronRight size={16} className="text-[#4e5270]" />
+    </div>
+  )
+}
+
+function AcpAgentCard({ agent, selected, onClick }: {
+  agent: AcpAgentInfo
+  selected: boolean
+  onClick: () => void
+}) {
+  const fallback = getAcpRuntimeDefinition(agent.id)
+  const isSelectable = agent.runtimeSupported && agent.status !== 'not_installed'
+  const statusNote = agent.status === 'not_installed'
+    ? 'CLI not installed'
+    : !agent.runtimeSupported
+      ? 'CLI detected, ACP runtime missing'
+      : agent.lastError
+        ? agent.lastError
+        : 'ACP runtime available'
+  const tone = agent.status === 'ready'
+    ? 'bg-green-500/10 text-green-400'
+    : agent.status === 'not_installed'
+      ? 'bg-gray-500/10 text-gray-400'
+      : agent.status === 'runtime_missing'
+        ? 'bg-red-500/10 text-red-400'
+      : 'bg-yellow-500/10 text-yellow-400'
+
+  return (
+    <div
+      onClick={isSelectable ? onClick : undefined}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors ${
+        selected
+          ? 'bg-[#4ADE80]/[0.09] border border-[#4ADE80]/60'
+          : 'bg-[#151820] border border-transparent'
+      } ${isSelectable ? 'cursor-pointer hover:border-[#282d3e]' : 'cursor-default opacity-60'}`}
+    >
+      <div className="w-1.5 h-5.5 rounded" style={{ backgroundColor: fallback?.color || '#4ADE80' }} />
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <div className="text-[13px] font-medium">{agent.name || fallback?.name || agent.id}</div>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded ${tone}`}>
+            {agent.status === 'not_installed' ? '未安装' : agent.status === 'runtime_missing' ? '缺少 ACP Runtime' : agent.status}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-[11px] text-[#4e5270] font-mono">{agent.executable}</div>
+          {agent.version && (
+            <div className="text-[10px] text-[#6b7280] font-mono">{agent.version}</div>
+          )}
+        </div>
+        <div className="text-[10px] text-[#6b7280] truncate">{statusNote}</div>
+      </div>
+      {selected && <Check size={16} style={{ color: fallback?.color || '#4ADE80' }} />}
     </div>
   )
 }

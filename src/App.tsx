@@ -24,6 +24,7 @@ export interface Session {
   projectName?: string    // Project display name
   projectPath?: string    // Project directory path
   agentId?: string        // Associated Agent
+  acpAgentId?: string     // Selected ACP runtime agent
   status: 'connecting' | 'connected' | 'disconnected'
   mode: 'terminal' | 'chat'  // View mode
   statusText?: string     // Status description (e.g., "运行中", "对话中")
@@ -41,6 +42,7 @@ export interface SessionRecord {
   env_id: string | null
   env_type: string
   agent_id: string | null
+  acp_agent_id: string | null
   project_id: string | null
   project_name: string | null
   project_path: string | null
@@ -71,6 +73,8 @@ export interface Project {
   env_id: string
   lang?: string
 }
+
+const isAcpSession = (session?: Session | null) => session?.agentId === 'acp'
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -107,6 +111,7 @@ function App() {
         projectId: r.project_id || undefined,
         projectName: r.project_name || undefined,
         projectPath: r.project_path || undefined,
+        acpAgentId: r.agent_id === 'acp' ? (r.acp_agent_id || 'opencode') : undefined,
         status: 'disconnected',
         mode: getAgentSessionMode(r.agent_id),
         startedAt: r.started_at || undefined,
@@ -155,10 +160,14 @@ function App() {
     const session = sessions.find(s => s.id === id)
     if (session) {
       try {
-        await invoke('close_session', {
-          sessionId: id,
-          sessionType: session.type,
-        })
+        if (isAcpSession(session)) {
+          await invoke('close_acp_session', { sessionId: id })
+        } else {
+          await invoke('close_session', {
+            sessionId: id,
+            sessionType: session.type,
+          })
+        }
       } catch (error) {
         console.error('Failed to close session:', error)
       }
@@ -201,8 +210,15 @@ function App() {
       // Reopen session in database
       await invoke('reopen_session', { sessionId: oldSession.id })
 
-      // Create PTY/SSH/WSL connection with existing ID
-      if (oldSession.type === 'local') {
+      if (isAcpSession(oldSession)) {
+        await invoke('create_acp_session', {
+          sessionId: oldSession.id,
+          acpAgentId: oldSession.acpAgentId || 'opencode',
+          workingDir: oldSession.projectPath,
+          sessionInfo: null,
+        })
+      } else if (oldSession.type === 'local') {
+        // Create PTY/SSH/WSL connection with existing ID
         await invoke('create_local_session', {
           sessionId: oldSession.id,
           shell: null,
@@ -246,8 +262,8 @@ function App() {
         s.id === oldSession.id ? { ...s, status: 'connected' as const } : s
       ))
 
-      // Auto-launch agent if session has an agent
-      if (shouldAutoLaunchAgent(oldSession.agentId)) {
+      // Auto-launch CLI agent if session has an agent
+      if (!isAcpSession(oldSession) && shouldAutoLaunchAgent(oldSession.agentId)) {
         setTimeout(async () => {
           try {
             await invoke('launch_agent', {

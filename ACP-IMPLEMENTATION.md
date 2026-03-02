@@ -442,3 +442,32 @@ PTY 是字节流终端，ACP 是结构化协议。
 ASquink 当前的 `ACP Agent` 已经完成了“入口接入 + 管理页半真实检测 + chat-only 会话收口”，但还没有进入真正的 ACP 协议阶段。
 
 后续开发应以 `acp.rs + 真实 session + 消息流 + messages 持久化` 为主线推进，而不是继续优先堆 UI。
+
+---
+
+## 12. 2026-03-02 Correction
+
+This document should not treat `ACP Agent` as one fixed backend anymore.
+
+The correct model is:
+
+- `agent_id = acp` means the session uses ACP chat mode
+- `acp_agent_id` stores the concrete ACP runtime/provider selected for that session
+- The "project coding" flow must allow choosing any installed/configured ACP provider
+- Session persistence and reconnect must restore the selected `acp_agent_id`
+- Backend runtime selection must be per session, not globally hardcoded
+
+Tracked ACP providers:
+
+- `claude`
+- `codex`
+- `gemini`
+- `opencode`
+
+Provider detection also needs two separate states:
+
+- CLI installed: the base provider command such as `claude` or `codex` exists locally
+- ACP runtime available: the command that can actually speak ACP is available for session startup
+
+The management UI must not treat "CLI installed" and "ACP runtime available" as the same thing.
+For example, `claude` and `codex` may be present locally while still lacking the ACP adapter/runtime needed for ASquink to start an ACP session.

@@ -1,5 +1,5 @@
-use async_trait::async_trait;
 use anyhow::{bail, Result};
+use async_trait::async_trait;
 use russh::{
     client,
     keys::{self, key::PrivateKeyWithHashAlg, HashAlg, PublicKey},
@@ -73,8 +73,9 @@ impl SshSession {
                 let key_data = std::fs::read(&path)
                     .map_err(|e| anyhow::anyhow!("Failed to read private key file: {}", e))?;
 
-                let key_str = std::str::from_utf8(&key_data)
-                    .map_err(|e| anyhow::anyhow!("Private key is not valid UTF-8 PEM text: {}", e))?;
+                let key_str = std::str::from_utf8(&key_data).map_err(|e| {
+                    anyhow::anyhow!("Private key is not valid UTF-8 PEM text: {}", e)
+                })?;
 
                 let key_header = key_str.lines().next().unwrap_or("");
                 eprintln!("Key header: {}", key_header);
@@ -92,26 +93,30 @@ impl SshSession {
                 let mut authed = false;
 
                 {
-                    let key =
-                        PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha512));
+                    let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha512));
 
-                    let auth_res = handle
-                        .authenticate_publickey(username, key)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("SSH authentication error (rsa-sha2-512): {}", e))?;
+                    let auth_res =
+                        handle
+                            .authenticate_publickey(username, key)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("SSH authentication error (rsa-sha2-512): {}", e)
+                            })?;
 
                     authed = auth_res.success();
                     eprintln!("auth with rsa-sha2-512: {}", authed);
                 }
 
                 if !authed {
-                    let key =
-                        PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha256));
+                    let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha256));
 
-                    let auth_res = handle
-                        .authenticate_publickey(username, key)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("SSH authentication error (rsa-sha2-256): {}", e))?;
+                    let auth_res =
+                        handle
+                            .authenticate_publickey(username, key)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("SSH authentication error (rsa-sha2-256): {}", e)
+                            })?;
 
                     authed = auth_res.success();
                     eprintln!("auth with rsa-sha2-256: {}", authed);
@@ -120,10 +125,13 @@ impl SshSession {
                 if !authed {
                     let key = PrivateKeyWithHashAlg::new(key_pair.clone(), None);
 
-                    let auth_res = handle
-                        .authenticate_publickey(username, key)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("SSH authentication error (legacy ssh-rsa): {}", e))?;
+                    let auth_res =
+                        handle
+                            .authenticate_publickey(username, key)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("SSH authentication error (legacy ssh-rsa): {}", e)
+                            })?;
 
                     authed = auth_res.success();
                     eprintln!("auth with legacy ssh-rsa: {}", authed);

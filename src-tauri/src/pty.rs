@@ -1,11 +1,11 @@
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
 use tauri::Emitter;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::session::{SessionStatus, TerminalSession};
 
@@ -28,7 +28,7 @@ impl PtyManager {
             sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-    
+
     pub async fn create_session(
         &self,
         id: &str,
@@ -62,16 +62,19 @@ impl PtyManager {
 
         let session = PtySession::new(id.to_string(), pair.master, child, app_handle)?;
 
-        self.sessions.lock().await.insert(id.to_string(), Box::new(session));
+        self.sessions
+            .lock()
+            .await
+            .insert(id.to_string(), Box::new(session));
         Ok(())
     }
-    
+
     #[allow(dead_code)]
     pub async fn get_session(&self, _id: &str) -> Option<Box<dyn TerminalSession>> {
         // This is a simplification - proper implementation needs to return a reference
         None
     }
-    
+
     pub async fn write(&self, id: &str, data: &[u8]) -> Result<()> {
         let sessions = self.sessions.lock().await;
         if let Some(session) = sessions.get(id) {
@@ -80,7 +83,7 @@ impl PtyManager {
             anyhow::bail!("Session not found: {}", id)
         }
     }
-    
+
     pub async fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<()> {
         let sessions = self.sessions.lock().await;
         if let Some(session) = sessions.get(id) {
@@ -89,7 +92,7 @@ impl PtyManager {
             anyhow::bail!("Session not found: {}", id)
         }
     }
-    
+
     pub async fn close_session(&self, id: &str) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         if let Some(mut session) = sessions.remove(id) {
@@ -147,7 +150,7 @@ impl TerminalSession for PtySession {
         writer.write_all(data)?;
         Ok(())
     }
-    
+
     async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
         let master = self.master.lock().await;
         master.resize(PtySize {
@@ -158,18 +161,18 @@ impl TerminalSession for PtySession {
         })?;
         Ok(())
     }
-    
+
     async fn close(&mut self) -> Result<()> {
         // The child will be killed when dropped
         *self.status.write().await = SessionStatus::Disconnected;
         Ok(())
     }
-    
+
     fn status(&self) -> SessionStatus {
         // Simplified - should check actual process status
         SessionStatus::Connected
     }
-    
+
     fn session_type(&self) -> &'static str {
         "local"
     }
@@ -178,8 +181,14 @@ impl TerminalSession for PtySession {
 fn detect_default_shell() -> String {
     if cfg!(target_os = "windows") {
         // Prefer PowerShell Core (pwsh) if available, otherwise use Windows PowerShell
-        which::which("pwsh").ok().map(|_| "pwsh".to_string())
-            .or_else(|| which::which("powershell").ok().map(|_| "powershell".to_string()))
+        which::which("pwsh")
+            .ok()
+            .map(|_| "pwsh".to_string())
+            .or_else(|| {
+                which::which("powershell")
+                    .ok()
+                    .map(|_| "powershell".to_string())
+            })
             .unwrap_or_else(|| "powershell.exe".to_string())
     } else {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())

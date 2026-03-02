@@ -1,5 +1,6 @@
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 
+#[derive(Clone)]
 pub struct Database {
     pool: Pool<Sqlite>,
 }
@@ -40,6 +41,7 @@ pub struct SessionRecord {
     pub env_id: Option<String>,
     pub env_type: String,
     pub agent_id: Option<String>,
+    pub acp_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub project_name: Option<String>,
     pub project_path: Option<String>,
@@ -54,8 +56,30 @@ pub struct CreateSessionRecord {
     pub name: Option<String>,
     pub env_id: Option<String>,
     pub agent_id: Option<String>,
+    pub acp_agent_id: Option<String>,
     pub project_id: Option<String>,
     pub working_dir: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageRecord {
+    pub id: String,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub status: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreateMessageRecord {
+    pub id: String,
+    pub session_id: String,
+    pub role: String,
+    pub content: String,
+    pub status: String,
 }
 
 impl Database {
@@ -133,6 +157,7 @@ impl Database {
                 name TEXT,
                 env_id TEXT,
                 agent_id TEXT,
+                acp_agent_id TEXT,
                 project_id TEXT,
                 working_dir TEXT,
                 started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -184,17 +209,18 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 session_id TEXT NOT NULL,
                 role TEXT NOT NULL,
-                text TEXT,
-                parts TEXT,
-                thinking TEXT,
-                tokens TEXT,
+                content TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'done',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (session_id) REFERENCES sessions(id)
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
+
+        self.migrate_messages_table().await?;
 
         // Insert built-in agents
         self.init_builtin_agents().await?;
@@ -205,7 +231,7 @@ impl Database {
     async fn migrate_servers_to_envs(&self) -> Result<(), sqlx::Error> {
         // Check if servers table exists
         let servers_exists: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='servers'"
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='servers'",
         )
         .fetch_one(&self.pool)
         .await?;
@@ -248,11 +274,9 @@ impl Database {
 
     async fn migrate_envs_table(&self) -> Result<(), sqlx::Error> {
         // Get current table info
-        let columns: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM pragma_table_info('envs')"
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let columns: Vec<(String,)> = sqlx::query_as("SELECT name FROM pragma_table_info('envs')")
+            .fetch_all(&self.pool)
+            .await?;
 
         let column_names: Vec<&str> = columns.iter().map(|(name,)| name.as_str()).collect();
 
@@ -357,7 +381,10 @@ impl Database {
                 if let Ok(contents) = std::fs::read_to_string("/etc/os-release") {
                     for line in contents.lines() {
                         if line.starts_with("PRETTY_NAME=") {
-                            return line.replace("PRETTY_NAME=", "").trim_matches('"').to_string();
+                            return line
+                                .replace("PRETTY_NAME=", "")
+                                .trim_matches('"')
+                                .to_string();
                         }
                     }
                 }
@@ -369,11 +396,10 @@ impl Database {
 
     async fn migrate_sessions_table(&self) -> Result<(), sqlx::Error> {
         // Get current table info
-        let columns: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM pragma_table_info('sessions')"
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let columns: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM pragma_table_info('sessions')")
+                .fetch_all(&self.pool)
+                .await?;
 
         let column_names: Vec<String> = columns.into_iter().map(|(name,)| name).collect();
         let has_column = |name: &str| column_names.iter().any(|column| column == name);
@@ -391,6 +417,11 @@ impl Database {
         }
         if !has_column("project_id") {
             sqlx::query("ALTER TABLE sessions ADD COLUMN project_id TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+        if !has_column("acp_agent_id") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN acp_agent_id TEXT")
                 .execute(&self.pool)
                 .await?;
         }
@@ -414,6 +445,7 @@ impl Database {
                     name TEXT,
                     env_id TEXT,
                     agent_id TEXT,
+                    acp_agent_id TEXT,
                     project_id TEXT,
                     working_dir TEXT,
                     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -428,16 +460,14 @@ impl Database {
 
             let copy_sql = format!(
                 r#"
-                INSERT INTO sessions_new (id, name, env_id, agent_id, project_id, working_dir, started_at, ended_at)
-                SELECT id, name, env_id, agent_id, project_id, {working_dir_expr}, started_at, ended_at
+                INSERT INTO sessions_new (id, name, env_id, agent_id, acp_agent_id, project_id, working_dir, started_at, ended_at)
+                SELECT id, name, env_id, agent_id, NULL, project_id, {working_dir_expr}, started_at, ended_at
                 FROM sessions
                 "#
             );
             sqlx::query(&copy_sql).execute(&mut *tx).await?;
 
-            sqlx::query("DROP TABLE sessions")
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query("DROP TABLE sessions").execute(&mut *tx).await?;
             sqlx::query("ALTER TABLE sessions_new RENAME TO sessions")
                 .execute(&mut *tx)
                 .await?;
@@ -450,18 +480,148 @@ impl Database {
         Ok(())
     }
 
+    async fn migrate_messages_table(&self) -> Result<(), sqlx::Error> {
+        let columns: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM pragma_table_info('messages')")
+                .fetch_all(&self.pool)
+                .await?;
+
+        let column_names: Vec<String> = columns.into_iter().map(|(name,)| name).collect();
+        let has_column = |name: &str| column_names.iter().any(|column| column == name);
+
+        if has_column("content")
+            && has_column("status")
+            && has_column("updated_at")
+            && !has_column("text")
+        {
+            return Ok(());
+        }
+
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *tx)
+            .await?;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE messages_new (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'done',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+            "#,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let content_expr = if has_column("content") {
+            "COALESCE(content, '')"
+        } else if has_column("text") {
+            "COALESCE(text, '')"
+        } else {
+            "''"
+        };
+        let status_expr = if has_column("status") {
+            "COALESCE(status, 'done')"
+        } else {
+            "'done'"
+        };
+        let created_at_expr = if has_column("created_at") {
+            "COALESCE(created_at, datetime('now'))"
+        } else {
+            "datetime('now')"
+        };
+        let updated_at_expr = if has_column("updated_at") {
+            "COALESCE(updated_at, created_at, datetime('now'))"
+        } else {
+            "COALESCE(created_at, datetime('now'))"
+        };
+
+        let copy_sql = format!(
+            r#"
+            INSERT INTO messages_new (id, session_id, role, content, status, created_at, updated_at)
+            SELECT id, session_id, role, {content_expr}, {status_expr}, {created_at_expr}, {updated_at_expr}
+            FROM messages
+            "#
+        );
+        sqlx::query(&copy_sql).execute(&mut *tx).await?;
+
+        sqlx::query("DROP TABLE messages").execute(&mut *tx).await?;
+        sqlx::query("ALTER TABLE messages_new RENAME TO messages")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+
+        Ok(())
+    }
+
     async fn init_builtin_agents(&self) -> Result<(), sqlx::Error> {
         // List of all builtin agents to seed
         let builtin_agents = [
-            ("claude", "Claude Code", "claude", r#"["--model", "opus"]"#, r#"["ANTHROPIC_API_KEY"]"#, "which claude", "npm install -g @anthropic-ai/claude-code", "claude"),
-            ("codex", "Codex", "codex", "[]", "[]", "which codex", "npm install -g @openai/codex", "codex"),
-            ("gemini", "Gemini CLI", "gemini", "[]", r#"["GEMINI_API_KEY"]"#, "which gemini", "npm install -g @anthropic/gemini-cli", "gemini"),
-            ("opencode", "OpenCode", "opencode", "[]", "[]", "which opencode", "npm install -g opencode", "opencode"),
+            (
+                "claude",
+                "Claude Code",
+                "claude",
+                r#"["--model", "opus"]"#,
+                r#"["ANTHROPIC_API_KEY"]"#,
+                "which claude",
+                "npm install -g @anthropic-ai/claude-code",
+                "claude",
+            ),
+            (
+                "codex",
+                "Codex",
+                "codex",
+                "[]",
+                "[]",
+                "which codex",
+                "npm install -g @openai/codex",
+                "codex",
+            ),
+            (
+                "gemini",
+                "Gemini CLI",
+                "gemini",
+                "[]",
+                r#"["GEMINI_API_KEY"]"#,
+                "which gemini",
+                "npm install -g @anthropic/gemini-cli",
+                "gemini",
+            ),
+            (
+                "opencode",
+                "OpenCode",
+                "opencode",
+                "[]",
+                "[]",
+                "which opencode",
+                "npm install -g opencode",
+                "opencode",
+            ),
             ("acp", "ACP Agent", "acp-agent", "[]", "[]", "", "", "acp"),
-            ("openclaw", "OpenClaw", "openclaw", "[]", "[]", "which openclaw", "npm install -g openclaw", "openclaw"),
+            (
+                "openclaw",
+                "OpenClaw",
+                "openclaw",
+                "[]",
+                "[]",
+                "which openclaw",
+                "npm install -g openclaw",
+                "openclaw",
+            ),
         ];
 
-        for (id, name, command, default_args, required_env, install_check_cmd, install_cmd, icon) in builtin_agents {
+        for (id, name, command, default_args, required_env, install_check_cmd, install_cmd, icon) in
+            builtin_agents
+        {
             let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM agents WHERE id = ?1")
                 .bind(id)
                 .fetch_one(&self.pool)
@@ -524,7 +684,11 @@ impl Database {
         })
     }
 
-    pub async fn create_env(&self, id: &str, req: &crate::CreateEnvRequest) -> Result<(), sqlx::Error> {
+    pub async fn create_env(
+        &self,
+        id: &str,
+        req: &crate::CreateEnvRequest,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO envs (id, name, type, host, port, username, auth_type, private_key_path, passphrase, icon, wsl_distro, wsl_user, status)
@@ -585,7 +749,11 @@ impl Database {
         self.get_env(id).await
     }
 
-    pub async fn create_server(&self, id: &str, req: &crate::CreateServerRequest) -> Result<(), sqlx::Error> {
+    pub async fn create_server(
+        &self,
+        id: &str,
+        req: &crate::CreateServerRequest,
+    ) -> Result<(), sqlx::Error> {
         let env_req = crate::CreateEnvRequest {
             name: req.name.clone(),
             env_type: "ssh".to_string(),
@@ -607,12 +775,10 @@ impl Database {
     }
 
     pub async fn get_setting(&self, key: &str) -> Result<Option<String>, sqlx::Error> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT value FROM settings WHERE key = ?1"
-        )
-        .bind(key)
-        .fetch_optional(&self.pool)
-        .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?1")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
         Ok(row.map(|r| r.0))
     }
 
@@ -638,7 +804,7 @@ impl Database {
     // Project management methods
     pub async fn list_projects(&self) -> Result<Vec<crate::Project>, sqlx::Error> {
         let projects = sqlx::query_as::<_, crate::Project>(
-            "SELECT id, name, path, env_id, lang FROM projects ORDER BY created_at DESC"
+            "SELECT id, name, path, env_id, lang FROM projects ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -647,12 +813,10 @@ impl Database {
 
     #[allow(dead_code)]
     pub async fn get_project(&self, id: &str) -> Result<ProjectConfig, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT id, name, path, env_id, lang FROM projects WHERE id = ?1"
-        )
-        .bind(id)
-        .fetch_one(&self.pool)
-        .await?;
+        let row = sqlx::query("SELECT id, name, path, env_id, lang FROM projects WHERE id = ?1")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
 
         use sqlx::Row;
         Ok(ProjectConfig {
@@ -664,7 +828,11 @@ impl Database {
         })
     }
 
-    pub async fn create_project(&self, id: &str, req: &crate::CreateProjectRequest) -> Result<(), sqlx::Error> {
+    pub async fn create_project(
+        &self,
+        id: &str,
+        req: &crate::CreateProjectRequest,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO projects (id, name, path, env_id, lang)
@@ -681,7 +849,11 @@ impl Database {
         Ok(())
     }
 
-    pub async fn update_project(&self, id: &str, req: &crate::CreateProjectRequest) -> Result<(), sqlx::Error> {
+    pub async fn update_project(
+        &self,
+        id: &str,
+        req: &crate::CreateProjectRequest,
+    ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             UPDATE projects SET name = ?1, path = ?2, env_id = ?3, lang = ?4 WHERE id = ?5
@@ -698,12 +870,11 @@ impl Database {
     }
 
     pub async fn delete_project(&self, id: &str) -> Result<(), sqlx::Error> {
-        let project: Option<(String, String)> = sqlx::query_as(
-            "SELECT name, path FROM projects WHERE id = ?1"
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await?;
+        let project: Option<(String, String)> =
+            sqlx::query_as("SELECT name, path FROM projects WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         if let Some((name, path)) = project {
             sqlx::query(
@@ -727,14 +898,15 @@ impl Database {
     pub async fn create_session(&self, session: &CreateSessionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, name, env_id, agent_id, project_id, working_dir, started_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+            INSERT INTO sessions (id, name, env_id, agent_id, acp_agent_id, project_id, working_dir, started_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
             "#,
         )
         .bind(&session.id)
         .bind(&session.name)
         .bind(&session.env_id)
         .bind(&session.agent_id)
+        .bind(&session.acp_agent_id)
         .bind(&session.project_id)
         .bind(&session.working_dir)
         .execute(&self.pool)
@@ -758,6 +930,7 @@ impl Database {
                     END
                 ) AS env_type,
                 s.agent_id,
+                s.acp_agent_id,
                 p.id AS project_id,
                 COALESCE(p.name, s.project_id) AS project_name,
                 COALESCE(p.path, s.working_dir) AS project_path,
@@ -768,7 +941,7 @@ impl Database {
             LEFT JOIN envs e ON e.id = s.env_id
             LEFT JOIN projects p ON p.id = s.project_id
             ORDER BY s.started_at DESC
-            "#
+            "#,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -784,6 +957,10 @@ impl Database {
     }
 
     pub async fn delete_session(&self, id: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM messages WHERE session_id = ?1")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         sqlx::query("DELETE FROM sessions WHERE id = ?1")
             .bind(id)
             .execute(&self.pool)
@@ -792,11 +969,68 @@ impl Database {
     }
 
     pub async fn reopen_session(&self, id: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE sessions SET ended_at = NULL, started_at = datetime('now') WHERE id = ?1")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE sessions SET ended_at = NULL, started_at = datetime('now') WHERE id = ?1",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
+    }
+
+    pub async fn create_message(&self, message: &CreateMessageRecord) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO messages (id, session_id, role, content, status, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%d %H:%M:%f', 'now'), strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            "#,
+        )
+        .bind(&message.id)
+        .bind(&message.session_id)
+        .bind(&message.role)
+        .bind(&message.content)
+        .bind(&message.status)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_message(
+        &self,
+        id: &str,
+        content: &str,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE messages
+            SET content = ?1, status = ?2, updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            WHERE id = ?3
+            "#,
+        )
+        .bind(content)
+        .bind(status)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_messages(&self, session_id: &str) -> Result<Vec<MessageRecord>, sqlx::Error> {
+        let messages = sqlx::query_as::<_, MessageRecord>(
+            r#"
+            SELECT id, session_id, role, content, status, created_at, updated_at
+            FROM messages
+            WHERE session_id = ?1
+            ORDER BY
+                COALESCE(created_at, updated_at) ASC,
+                rowid ASC
+            "#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(messages)
     }
 }
 

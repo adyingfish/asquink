@@ -1,177 +1,402 @@
-import { CheckCircle, ChevronRight, Edit, FileText, MessageSquareText, Play, Search, XCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { AlertTriangle, ChevronRight, LoaderCircle, MessageSquareText } from 'lucide-react'
+import type { Session } from '../App'
+import { getAcpRuntimeDefinition } from '../utils/agents'
 
 const C = {
-  bg0: '#08090d', bg2: '#151820', bg3: '#1b1f2b',
-  bd: '#282d3e', bds: '#1d2030',
-  t1: '#e2e4ed', t2: '#8b8fa7', t3: '#4e5270',
-  grn: '#4ADE80', red: '#F87171', blu: '#60A5FA', pur: '#C084FC',
+  bg0: '#08090d',
+  bg2: '#151820',
+  bg3: '#1b1f2b',
+  bd: '#282d3e',
+  bds: '#1d2030',
+  t1: '#e2e4ed',
+  t2: '#8b8fa7',
+  t3: '#4e5270',
+  grn: '#4ADE80',
+  red: '#F87171',
+  blu: '#60A5FA',
+  yel: '#FBBF24',
 }
 
-interface DemoMessage {
+interface ChatViewProps {
+  session?: Session
+}
+
+interface MessageRecord {
   id: string
-  type: 'user' | 'thinking' | 'assistant' | 'edit' | 'command' | 'result' | 'usage'
-  text?: string
-  files?: string[]
-  file?: string
-  rm?: string
-  add?: string
-  isNew?: boolean
-  command?: string
-  ok?: boolean
-  summary?: string
+  sessionId: string
+  role: string
+  content: string
+  status: string
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
-const DEMO_MESSAGES: DemoMessage[] = [
-  { id: '1', type: 'user', text: 'fix the authentication bug in login.ts' },
-  { id: '2', type: 'thinking', text: 'Reading project structure...', files: ['src/auth/login.ts', 'src/auth/session.ts'] },
-  { id: '3', type: 'assistant', text: 'Found the issue: token validation uses wrong expiry field. The code checks decoded.expiresAt but the JWT library uses decoded.exp.' },
-  { id: '4', type: 'edit', file: 'src/auth/login.ts', rm: 'if (decoded.expiresAt < Date.now()/1000) {', add: 'if (decoded.exp < Date.now()/1000) {' },
-  { id: '5', type: 'command', command: 'npm test' },
-  { id: '6', type: 'result', ok: true, summary: 'All 23 tests passed' },
-  { id: '7', type: 'assistant', text: 'Fixed. JWT token was checking the wrong field name for expiration. All tests pass now.' },
-  { id: '8', type: 'usage', text: '↑12,847 ↓1,203 $0.018' },
-]
+interface AcpStatusPayload {
+  sessionId: string
+  status: string
+  runtimeAgentId: string
+  runtimeAgentName: string
+  protocolVersion?: string | null
+  runtimeVersion?: string | null
+  lastError?: string | null
+}
 
-function DemoChatMessage({ message }: { message: DemoMessage }) {
-  switch (message.type) {
-    case 'user':
-      return (
-        <div className="flex justify-end mb-[14px]">
-          <div
-            className="max-w-[85%] px-3.5 py-2.5 rounded-[13px_13px_4px_13px] text-[12.5px] leading-relaxed"
-            style={{ background: C.bg3, border: `1px solid ${C.bd}`, color: C.t1 }}
-          >
-            {message.text}
-          </div>
-        </div>
-      )
-    case 'thinking':
-      return (
-        <div className="mb-2.5">
-          <div
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px]"
-            style={{ background: C.bg2, border: `1px solid ${C.bds}`, color: C.pur }}
-          >
-            <Search size={12} />
-            {message.text}
-            {message.files && (
-              <span className="text-[10px]" style={{ color: C.t3 }}>
-                ({message.files.length} files)
-              </span>
-            )}
-          </div>
-        </div>
-      )
-    case 'assistant':
-      return (
-        <div className="mb-[14px] py-2 px-3 text-[12.5px] leading-[1.65]" style={{ color: C.t1 }}>
-          {message.text}
-        </div>
-      )
-    case 'edit':
-      return (
-        <div className="mb-2.5 p-2.5 rounded-md" style={{ background: C.bg2, border: `1px solid ${C.bds}` }}>
-          <div className="flex items-center gap-2 mb-1.5">
-            {message.isNew ? <FileText size={12} style={{ color: C.blu }} /> : <Edit size={12} style={{ color: C.blu }} />}
-            <span className="text-[11px] font-semibold" style={{ color: C.blu }}>
-              {message.file}
-            </span>
-          </div>
-          {message.rm && message.add && (
-            <div className="font-mono text-[11px] leading-relaxed">
-              <div style={{ color: C.red }}>- {message.rm}</div>
-              <div style={{ color: C.grn }}>+ {message.add}</div>
-            </div>
-          )}
-        </div>
-      )
-    case 'command':
-      return (
-        <div className="mb-2.5 p-2.5 rounded-md" style={{ background: C.bg2, border: `1px solid ${C.bds}` }}>
-          <div className="flex items-center gap-1.5">
-            <Play size={10} style={{ color: C.blu }} />
-            <span className="text-[11px] font-semibold" style={{ color: C.blu }}>
-              {message.command}
-            </span>
-          </div>
-        </div>
-      )
-    case 'result':
-      return (
-        <div className="mb-[14px] flex justify-center">
-          <div
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[7px] text-[12px] font-semibold"
-            style={{
-              background: message.ok ? `${C.grn}10` : `${C.red}10`,
-              color: message.ok ? C.grn : C.red,
-            }}
-          >
-            {message.ok ? <CheckCircle size={12} /> : <XCircle size={12} />}
-            {message.summary}
-          </div>
-        </div>
-      )
-    case 'usage':
-      return (
-        <div className="mb-2.5 flex justify-center">
-          <div className="font-mono text-[10px] px-2.5 py-[3px] rounded-md" style={{ background: C.bg2, color: C.t3 }}>
-            {message.text}
-          </div>
-        </div>
-      )
-    default:
-      return null
+interface AcpMessageDeltaPayload {
+  sessionId: string
+  messageId: string
+  role: string
+  delta: string
+  content: string
+  status: string
+}
+
+interface AcpMessageCompletePayload {
+  sessionId: string
+  messageId: string
+  role: string
+  content: string
+  status: string
+  stopReason?: string | null
+}
+
+interface AcpErrorPayload {
+  sessionId: string
+  message: string
+  fatal: boolean
+}
+
+const parseTimestamp = (value?: string | null) => {
+  if (!value) return null
+  const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`
+  const parsed = Date.parse(normalized)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const messageSortKey = (message: MessageRecord) => parseTimestamp(message.createdAt) ?? parseTimestamp(message.updatedAt)
+
+const sortMessages = (messages: MessageRecord[]) =>
+  messages
+    .map((message, index) => ({ message, index }))
+    .sort((left, right) => {
+      const leftTime = messageSortKey(left.message)
+      const rightTime = messageSortKey(right.message)
+
+      if (leftTime !== null && rightTime !== null && leftTime !== rightTime) {
+        return leftTime - rightTime
+      }
+
+      if (leftTime === null && rightTime !== null) return 1
+      if (leftTime !== null && rightTime === null) return -1
+
+      return left.index - right.index
+    })
+    .map(({ message }) => message)
+
+const mergeMessage = (messages: MessageRecord[], next: MessageRecord) => {
+  const existing = messages.findIndex((message) => message.id === next.id)
+  if (existing === -1) {
+    return sortMessages([...messages, next])
   }
+
+  const updated = [...messages]
+  updated[existing] = { ...updated[existing], ...next }
+  return sortMessages(updated)
 }
 
-export default function ChatView() {
+const getStatusTone = (status: string) => {
+  if (status === 'ready') return { label: 'Ready', color: C.grn }
+  if (status === 'handshaking' || status === 'starting') return { label: 'Handshaking', color: C.yel }
+  if (status === 'error') return { label: 'Error', color: C.red }
+  if (status === 'closed') return { label: 'Closed', color: C.red }
+  return { label: 'Idle', color: C.t2 }
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="flex-1 flex items-center justify-center px-6">
+      <div className="max-w-sm text-center">
+        <div className="mx-auto mb-4 w-12 h-12 rounded-2xl border border-[#282d3e] bg-[#151820] flex items-center justify-center text-[#8b8fa7]">
+          <MessageSquareText size={20} />
+        </div>
+        <div className="text-[13px] text-[#8b8fa7] leading-relaxed">{text}</div>
+      </div>
+    </div>
+  )
+}
+
+function MessageBubble({ message }: { message: MessageRecord }) {
+  if (message.role === 'user') {
+    return (
+      <div className="flex justify-end mb-[14px]">
+        <div
+          className="max-w-[85%] px-3.5 py-2.5 rounded-[13px_13px_4px_13px] text-[12.5px] leading-relaxed whitespace-pre-wrap"
+          style={{ background: C.bg3, border: `1px solid ${C.bd}`, color: C.t1 }}
+        >
+          {message.content}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="mb-[14px]">
+      <div className="py-2 px-3 text-[12.5px] leading-[1.65] whitespace-pre-wrap" style={{ color: C.t1 }}>
+        {message.content || (message.status === 'streaming' ? '...' : '')}
+      </div>
+      {message.status !== 'done' && (
+        <div className="px-3 text-[10px] font-medium" style={{ color: message.status === 'error' ? C.red : C.t3 }}>
+          {message.status}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function ChatView({ session }: ChatViewProps) {
+  const [messages, setMessages] = useState<MessageRecord[]>([])
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [status, setStatus] = useState(session?.status === 'connected' ? 'ready' : 'closed')
+  const [runtimeLabel, setRuntimeLabel] = useState(getAcpRuntimeDefinition(session?.acpAgentId)?.name || 'ACP')
+  const [runtimeMeta, setRuntimeMeta] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  const isAcp = session?.agentId === 'acp'
+
+  useEffect(() => {
+    setRuntimeLabel(getAcpRuntimeDefinition(session?.acpAgentId)?.name || 'ACP')
+  }, [session?.acpAgentId])
+
+  useEffect(() => {
+    if (!scrollRef.current) return
+    scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+  }, [messages, status, error])
+
+  useEffect(() => {
+    let cancelled = false
+    let unlisteners: UnlistenFn[] = []
+
+    const loadMessages = async () => {
+      if (!session?.id || !isAcp) {
+        setMessages([])
+        setError(null)
+        setStatus(session?.status === 'connected' ? 'ready' : 'closed')
+        return
+      }
+
+      try {
+        const loaded = await invoke<MessageRecord[]>('list_session_messages', { sessionId: session.id })
+        if (!cancelled) {
+          setMessages(sortMessages(loaded))
+          setError(null)
+          setStatus(session.status === 'connected' ? 'ready' : 'closed')
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          setError(String(loadError))
+        }
+      }
+    }
+
+    const bindEvents = async () => {
+      if (!session?.id || !isAcp) return
+
+      unlisteners = await Promise.all([
+        listen<AcpStatusPayload>(`acp-session-status-${session.id}`, (event) => {
+          const payload = event.payload
+          setStatus(payload.status)
+          setRuntimeLabel(payload.runtimeAgentName || payload.runtimeAgentId || 'ACP')
+          setRuntimeMeta([
+            payload.protocolVersion,
+            payload.runtimeVersion ? `v${payload.runtimeVersion}` : null,
+          ].filter(Boolean).join(' · ') || null)
+          setError(payload.lastError || null)
+        }),
+        listen<AcpMessageDeltaPayload>(`acp-message-delta-${session.id}`, (event) => {
+          const payload = event.payload
+          setMessages((current) => mergeMessage(current, {
+            id: payload.messageId,
+            sessionId: payload.sessionId,
+            role: payload.role,
+            content: payload.content,
+            status: payload.status,
+          }))
+        }),
+        listen<AcpMessageCompletePayload>(`acp-message-complete-${session.id}`, (event) => {
+          const payload = event.payload
+          setMessages((current) => mergeMessage(current, {
+            id: payload.messageId,
+            sessionId: payload.sessionId,
+            role: payload.role,
+            content: payload.content,
+            status: payload.status,
+          }))
+        }),
+        listen<AcpErrorPayload>(`acp-session-error-${session.id}`, (event) => {
+          setError(event.payload.message)
+          if (event.payload.fatal) {
+            setStatus('error')
+          }
+        }),
+        listen(`acp-session-closed-${session.id}`, () => {
+          setStatus('closed')
+        }),
+      ])
+    }
+
+    loadMessages()
+    bindEvents()
+
+    return () => {
+      cancelled = true
+      unlisteners.forEach((unlisten) => unlisten())
+    }
+  }, [isAcp, session?.id, session?.status])
+
+  const handleSend = async () => {
+    if (!session?.id || !isAcp || !draft.trim() || sending) return
+
+    const content = draft.trim()
+    const optimisticId = `local-user-${Date.now()}`
+    setMessages((current) =>
+      sortMessages([
+        ...current,
+        {
+          id: optimisticId,
+          sessionId: session.id,
+          role: 'user',
+          content,
+          status: 'done',
+          createdAt: new Date().toISOString(),
+        },
+      ]),
+    )
+    setDraft('')
+    setSending(true)
+    setError(null)
+
+    try {
+      await invoke('send_acp_message', {
+        sessionId: session.id,
+        content,
+      })
+
+      const loaded = await invoke<MessageRecord[]>('list_session_messages', { sessionId: session.id })
+      setMessages(sortMessages(loaded))
+    } catch (sendError) {
+      setError(String(sendError))
+      setMessages((current) =>
+        sortMessages(current.map((message) =>
+          message.id === optimisticId ? { ...message, status: 'error' } : message,
+        )),
+      )
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const tone = getStatusTone(status)
+
+  if (!session) {
+    return (
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <EmptyState text="Select a session to view chat messages." />
+      </div>
+    )
+  }
+
+  if (!isAcp) {
+    return (
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <div className="px-3 py-1.5 border-b shrink-0 flex items-center gap-1.5" style={{ background: C.bg2, borderColor: C.bds }}>
+          <MessageSquareText size={12} style={{ color: C.t2 }} />
+          <span className="text-[11px] font-semibold" style={{ color: C.t2 }}>
+            Chat
+          </span>
+        </div>
+        <EmptyState text="This chat panel is wired for ACP sessions. Other chat-mode agents still use the older placeholder flow." />
+      </div>
+    )
+  }
+
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
       <div className="px-3 py-1.5 border-b shrink-0 flex items-center gap-1.5" style={{ background: C.bg2, borderColor: C.bds }}>
         <MessageSquareText size={12} style={{ color: C.t2 }} />
         <span className="text-[11px] font-semibold" style={{ color: C.t2 }}>
-          对话
+          ACP Chat
         </span>
         <span
           className="h-5 px-2 rounded-md border flex items-center gap-1 text-[9px] font-semibold tracking-[0.08em] ml-auto"
           style={{
-            color: C.grn,
-            background: `${C.grn}12`,
-            borderColor: `${C.grn}20`,
+            color: tone.color,
+            background: `${tone.color}12`,
+            borderColor: `${tone.color}20`,
           }}
         >
-          示例
+          {sending && <LoaderCircle size={10} className="animate-spin" />}
+          {tone.label}
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-3.5 min-h-0">
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md mb-4" style={{ background: `${C.pur}08`, border: `1px solid ${C.pur}20` }}>
-          <MessageSquareText size={12} style={{ color: C.pur }} />
-          <span style={{ fontSize: '10.5px', color: C.pur }}>
-            此为示例对话界面，实际对话功能开发中
-          </span>
-        </div>
+      <div className="px-4 py-2 border-b text-[10px] flex items-center gap-2" style={{ background: C.bg0, borderColor: C.bds, color: C.t3 }}>
+        <span className="font-semibold" style={{ color: C.t2 }}>{runtimeLabel}</span>
+        {runtimeMeta && <span>{runtimeMeta}</span>}
+        {session.projectPath && (
+          <>
+            <span>/</span>
+            <span className="font-mono truncate">{session.projectPath}</span>
+          </>
+        )}
+      </div>
 
-        {DEMO_MESSAGES.map((message) => (
-          <DemoChatMessage key={message.id} message={message} />
-        ))}
+      {error && (
+        <div className="mx-4 mt-3 px-3 py-2 rounded-lg border flex items-start gap-2 text-[11px]" style={{ borderColor: `${C.red}35`, background: `${C.red}10`, color: C.red }}>
+          <AlertTriangle size={14} className="mt-[1px] shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3.5 min-h-0">
+        {messages.length === 0 ? (
+          <EmptyState text={status === 'ready' ? 'Session is ready. Send the first prompt.' : 'Reconnect or wait for the ACP session to become ready.'} />
+        ) : (
+          messages.map((message) => <MessageBubble key={message.id} message={message} />)
+        )}
       </div>
 
       <div className="shrink-0 px-3 py-2.5 border-t" style={{ background: C.bg0, borderColor: C.bds }}>
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg border" style={{ background: C.bg2, borderColor: C.bds }}>
-          <span className="flex-1 text-[12px]" style={{ color: C.t3 }}>
-            输入指令...
-          </span>
-          <span
-            className="text-[9px] px-1.5 py-[2px] rounded-md font-semibold tracking-wide"
-            style={{ color: C.blu, background: `${C.blu}15`, border: `1px solid ${C.blu}25` }}
+        <div className="flex items-end gap-2 px-3 py-2.5 rounded-lg border" style={{ background: C.bg2, borderColor: C.bds }}>
+          <textarea
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                void handleSend()
+              }
+            }}
+            rows={1}
+            placeholder={status === 'ready' ? 'Send a prompt to the ACP agent...' : 'ACP session is not ready'}
+            disabled={status !== 'ready' || sending}
+            className="flex-1 bg-transparent border-none outline-none resize-none text-[12px] leading-5 placeholder-[#4e5270] text-[#e2e4ed] disabled:text-[#4e5270]"
+          />
+          <button
+            onClick={() => void handleSend()}
+            disabled={status !== 'ready' || sending || !draft.trim()}
+            className="w-8 h-8 rounded-md border flex items-center justify-center disabled:opacity-40"
+            style={{
+              borderColor: sending || !draft.trim() ? C.bds : `${C.blu}40`,
+              color: sending || !draft.trim() ? C.t3 : C.blu,
+              background: sending || !draft.trim() ? 'transparent' : `${C.blu}12`,
+            }}
           >
-            示例
-          </span>
-          <ChevronRight size={14} style={{ color: C.t3 }} />
-          <span className="hidden" style={{ color: C.t3 }}>
-            ↵
-          </span>
+            {sending ? <LoaderCircle size={14} className="animate-spin" /> : <ChevronRight size={14} />}
+          </button>
         </div>
       </div>
     </div>
