@@ -246,14 +246,10 @@ export class TerminalController {
 
       const session = this.sessions.find((item) => item.id === sessionId)
       if (session?.status === 'connected') {
-        let processedData = data
-        if (processedData === '\r' || processedData === '\n') {
-          processedData = '\r\n'
-        }
         invoke('write_to_session', {
           sessionId,
           sessionType: session.type,
-          data: processedData,
+          data,
         }).catch(console.error)
       }
     })
@@ -495,9 +491,10 @@ export class TerminalController {
     }
 
     let processedText = text
-    processedText = processedText.replace(/\r\n/g, '\n')
-    processedText = processedText.replace(/\r/g, '\n')
-    processedText = processedText.replace(/\n/g, '\r\n')
+    // Normalize pasted line endings to a single carriage return so shell
+    // receives one "Enter" per line instead of CRLF double line breaks.
+    processedText = processedText.replace(/\r\n/g, '\r')
+    processedText = processedText.replace(/\n/g, '\r')
 
     invoke('write_to_session', {
       sessionId: this.activeSessionId,
