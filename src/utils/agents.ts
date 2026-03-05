@@ -20,7 +20,7 @@ export interface AcpRuntimeDefinition {
 
 export const AGENTS: AgentDefinition[] = [
   { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
-  { id: 'codex', name: 'Codex', short: 'Codex', color: '#E5E7EB', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
+  { id: 'codex', name: 'Codex', short: 'Codex', color: 'var(--codex-color)', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
   { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
   { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#78716C', needsProject: true, sessionMode: 'terminal', launchStrategy: 'cli' },
   { id: 'acp', name: 'ACP Agent', short: 'ACP', color: '#4ADE80', needsProject: true, sessionMode: 'chat', launchStrategy: 'acp' },
@@ -29,7 +29,7 @@ export const AGENTS: AgentDefinition[] = [
 
 export const ACP_RUNTIME_AGENTS: AcpRuntimeDefinition[] = [
   { id: 'claude', name: 'Claude Code ACP', short: 'Claude ACP', color: '#E8915A' },
-  { id: 'codex', name: 'Codex ACP', short: 'Codex ACP', color: '#E5E7EB' },
+  { id: 'codex', name: 'Codex ACP', short: 'Codex ACP', color: 'var(--codex-color)' },
   { id: 'gemini', name: 'Gemini ACP', short: 'Gemini ACP', color: '#60A5FA' },
   { id: 'opencode', name: 'OpenCode ACP', short: 'OpenCode ACP', color: '#78716C' },
 ]

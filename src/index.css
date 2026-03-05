@@ -5,6 +5,8 @@
 :root {
   color-scheme: dark;
   --app-bg: #08090d;
+  --terminal-bg: #0f1218;
+  --xterm-bg: #141922;
   --panel-bg: #0e1015;
   --panel-bg-elevated: #151820;
   --panel-bg-hover: #222738;
@@ -13,11 +15,34 @@
   --text-primary: #e2e4ed;
   --text-secondary: #8b8fa7;
   --text-tertiary: #4e5270;
-  --accent: #e8915a;
-  --accent-strong: #d46a28;
+  --text-muted: #6f748f;
+  --text-subtle: #555872;
+  --text-divider: #3f435a;
+  --codex-color: #ffffff;
+  --accent: #8b5cf6;
+  --accent-strong: #6d28d9;
   --success: #4ade80;
   --warning: #fbbf24;
   --info: #60a5fa;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --app-bg: #f3f6fb;
+  --terminal-bg: #eef3f9;
+  --xterm-bg: #141922;
+  --panel-bg: #ffffff;
+  --panel-bg-elevated: #f8fafc;
+  --panel-bg-hover: #edf2f7;
+  --panel-border: #d8e0eb;
+  --panel-border-strong: #c5cedb;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-tertiary: #64748b;
+  --text-muted: #64748b;
+  --text-subtle: #7b8496;
+  --text-divider: #9aa4b6;
+  --codex-color: #000000;
 }
 
 html, body {
@@ -33,6 +58,89 @@ html, body {
 
 #root {
   height: 100vh;
+}
+
+.app-shell.theme-dark {
+  background: var(--app-bg);
+  color: var(--text-primary);
+}
+
+.app-shell.theme-light {
+  background: var(--app-bg);
+  color: var(--text-primary);
+}
+
+/* Map legacy hard-coded Tailwind colors into the light palette. */
+.theme-light .text-\[\#f5f7fb\],
+.theme-light .text-\[\#e2e4ed\] {
+  color: var(--text-primary) !important;
+}
+
+.theme-light .text-\[\#8b8fa7\],
+.theme-light .text-\[\#6f748f\],
+.theme-light .text-\[\#555872\] {
+  color: var(--text-secondary) !important;
+}
+
+.theme-light .text-\[\#4e5270\],
+.theme-light .text-\[\#3f435a\] {
+  color: var(--text-tertiary) !important;
+}
+
+.theme-light .placeholder-\[\#4e5270\]::placeholder {
+  color: var(--text-tertiary) !important;
+  opacity: 1;
+}
+
+.theme-light .disabled\:text-\[\#4e5270\]:disabled {
+  color: var(--text-tertiary) !important;
+}
+
+.theme-light .bg-\[\#08090d\] {
+  background-color: var(--app-bg) !important;
+}
+
+.theme-light .bg-\[\#0e1015\],
+.theme-light .bg-\[\#0f1117\] {
+  background-color: var(--panel-bg) !important;
+}
+
+.theme-light .bg-\[\#151820\],
+.theme-light .bg-\[\#161822\] {
+  background-color: var(--panel-bg-elevated) !important;
+}
+
+.theme-light .bg-\[\#1b1f2b\],
+.theme-light .bg-\[\#1e2130\],
+.theme-light .bg-\[\#222738\],
+.theme-light .bg-\[\#232738\],
+.theme-light .bg-\[\#2a2e40\] {
+  background-color: var(--panel-bg-hover) !important;
+}
+
+.theme-light .border-\[\#1d2030\] {
+  border-color: var(--panel-border) !important;
+}
+
+.theme-light .border-\[\#282d3e\],
+.theme-light .border-\[\#3a3f57\] {
+  border-color: var(--panel-border-strong) !important;
+}
+
+.theme-light .hover\:bg-\[\#151820\]:hover {
+  background-color: var(--panel-bg-elevated) !important;
+}
+
+.theme-light .hover\:bg-\[\#1e2130\]:hover,
+.theme-light .hover\:bg-\[\#222738\]:hover,
+.theme-light .hover\:bg-\[\#232738\]:hover,
+.theme-light .hover\:bg-\[\#2a2e40\]:hover {
+  background-color: var(--panel-bg-hover) !important;
+}
+
+.theme-light .hover\:text-\[\#8b8fa7\]:hover,
+.theme-light .hover\:text-\[\#f5f7fb\]:hover {
+  color: var(--text-primary) !important;
 }
 
 * {
@@ -66,10 +174,15 @@ html, body {
 .xterm {
   height: 100%;
   padding: 12px 14px;
+  background: var(--xterm-bg);
 }
 
 .xterm-viewport::-webkit-scrollbar {
   width: 6px;
+}
+
+.xterm .xterm-viewport {
+  background: var(--xterm-bg);
 }
 
 .xterm-viewport::-webkit-scrollbar-thumb {

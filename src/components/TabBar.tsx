@@ -26,6 +26,9 @@ const getSessionTypeIcon = (session: Session) => {
   return Command
 }
 
+const withAlpha = (color: string, percent: number) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`
+
 const getSessionTypeTint = (session: Session) => {
   if (isPureTerminalSession(session)) {
     return {
@@ -86,7 +89,10 @@ export default function TabBar({ sessions, activeSessionId, onSelectSession, onC
   const visibleSessions = sessions.filter(session => session.status !== 'disconnected')
 
   return (
-    <div className="h-12 bg-[#0e1015] border-b border-[#1d2030] px-3 flex items-center gap-2 overflow-x-auto">
+    <div
+      className="h-12 border-b px-3 flex items-center gap-2 overflow-x-auto"
+      style={{ background: 'var(--panel-bg)', borderColor: 'var(--panel-border)' }}
+    >
       {visibleSessions.map(session => {
         const { primary, secondary, agent } = getTabTitle(session)
         const isActive = activeSessionId === session.id
@@ -99,15 +105,15 @@ export default function TabBar({ sessions, activeSessionId, onSelectSession, onC
             onClick={() => onSelectSession(session.id)}
             className={`h-[34px] px-3 rounded-lg flex items-center gap-2 cursor-pointer min-w-[148px] max-w-[240px] group transition-all border ${
               isActive
-                ? 'bg-[#151820] text-[#f5f7fb] border-[#282d3e] shadow-[0_0_0_1px_rgba(232,145,90,0.14)]'
+                ? 'bg-[#151820] text-[#f5f7fb] border-[#282d3e] shadow-[0_0_0_1px_rgba(139,92,246,0.14)]'
                 : 'bg-transparent text-[#555872] border-transparent hover:bg-[#151820] hover:border-[#1d2030] hover:text-[#8b8fa7]'
             }`}
           >
             <div
               className="w-7 h-7 rounded-md flex items-center justify-center border flex-shrink-0"
               style={{
-                background: `${agent?.color || '#4e5270'}18`,
-                borderColor: `${agent?.color || '#4e5270'}30`,
+                background: withAlpha(agent?.color || '#4e5270', 9),
+                borderColor: withAlpha(agent?.color || '#4e5270', 19),
                 color: agent?.color || '#8b8fa7',
               }}
             >

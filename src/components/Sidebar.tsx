@@ -15,6 +15,7 @@ import {
   Rocket,
   Search,
   Settings,
+  SunMoon,
   SquareTerminal,
   Trash2,
 } from 'lucide-react'
@@ -63,6 +64,8 @@ interface SidebarProps {
   onReconnectSession: (session: Session) => void
   isLoading?: boolean
   onOpenEnvManage?: () => void
+  themeMode?: 'dark' | 'light'
+  onToggleTheme?: () => void
   refreshKey?: number
   getPreferredPtySize: () => { cols: number; rows: number }
 }
@@ -118,6 +121,8 @@ export default function Sidebar({
   onReconnectSession,
   isLoading,
   onOpenEnvManage,
+  themeMode = 'dark',
+  onToggleTheme,
   refreshKey,
   getPreferredPtySize,
 }: SidebarProps) {
@@ -519,7 +524,7 @@ export default function Sidebar({
     >
       <div className="px-3.5 py-3 border-b border-[#1d2030]">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#E8915A] to-[#D46A28] shadow-[0_8px_24px_rgba(232,145,90,0.24)] flex items-center justify-center text-white text-sm font-semibold">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6D28D9] shadow-[0_8px_24px_rgba(139,92,246,0.24)] flex items-center justify-center text-white text-sm font-semibold">
             AQ
           </div>
           <div className="flex-1 min-w-0">
@@ -587,7 +592,7 @@ export default function Sidebar({
                   className="flex items-center gap-2 px-2.5 py-1.75 rounded-lg cursor-pointer transition-colors"
                   style={{ opacity: online ? 1 : 0.38 }}
                   onMouseEnter={(e) => {
-                    if (online) e.currentTarget.style.background = '#222738'
+                    if (online) e.currentTarget.style.background = 'var(--panel-bg-hover)'
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = 'transparent'
@@ -627,8 +632,8 @@ export default function Sidebar({
                         checkEnvStatus(env.id)
                       }}
                       className="text-[10px] text-[#4e5270] cursor-pointer px-2 py-1 rounded hover:bg-[#222738]"
-                      onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
-                      onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
+                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
                     >
                       ↻ 重新连接
                     </span>
@@ -666,15 +671,15 @@ export default function Sidebar({
                             }}
                             className="flex items-center gap-1.75 px-2 py-1.5 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
                             style={{
-                              background: isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
-                              borderLeft: isAct && !isDisconnected ? '2.5px solid #E8915A' : '2.5px solid transparent',
+                              background: isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+                              borderLeft: isAct && !isDisconnected ? '2.5px solid #8B5CF6' : '2.5px solid transparent',
                               opacity: isDisconnected ? 0.5 : 1,
                             }}
                             onMouseEnter={(e) => {
-                              if (!isAct || isDisconnected) e.currentTarget.style.background = '#222738'
+                              if (!isAct || isDisconnected) e.currentTarget.style.background = 'var(--panel-bg-hover)'
                             }}
                             onMouseLeave={(e) => {
-                              e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
+                              e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent'
                             }}
                           >
                             <Folder size={12} className="text-[#4e5270] shrink-0" />
@@ -715,7 +720,7 @@ export default function Sidebar({
                           <div
                             onClick={() => toggleProjectExpand(pk)}
                             className="flex items-center gap-1.5 px-2 py-2 rounded-md cursor-pointer"
-                            onMouseEnter={(e) => e.currentTarget.style.background = '#222738'}
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--panel-bg-hover)'}
                             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                           >
                             <span
@@ -769,15 +774,15 @@ export default function Sidebar({
                                     }}
                                     className="flex items-center gap-1.75 px-2 py-1.25 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
                                     style={{
-                                      background: isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
-                                      borderLeft: isAct && !isDisconnected ? '2.5px solid #E8915A' : '2.5px solid transparent',
+                                      background: isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+                                      borderLeft: isAct && !isDisconnected ? '2.5px solid #8B5CF6' : '2.5px solid transparent',
                                       opacity: isDisconnected ? 0.5 : 1,
                                     }}
                                     onMouseEnter={(e) => {
-                                      if (!isAct || isDisconnected) e.currentTarget.style.background = '#222738'
+                                      if (!isAct || isDisconnected) e.currentTarget.style.background = 'var(--panel-bg-hover)'
                                     }}
                                     onMouseLeave={(e) => {
-                                      e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
+                                      e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent'
                                     }}
                                   >
                                     <div
@@ -812,8 +817,8 @@ export default function Sidebar({
                               <div
                                 className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-[#4e5270] cursor-pointer rounded-md"
                                 onClick={() => setShowNewSession(true)}
-                                onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
-                                onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
+                                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+                                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
                               >
                                 <Plus size={12} /> 添加 Agent
                               </div>
@@ -847,15 +852,15 @@ export default function Sidebar({
                           }}
                           className="flex items-center gap-1.75 px-2 py-1.5 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
                           style={{
-                            background: isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent',
-                            borderLeft: isAct && !isDisconnected ? '2.5px solid #E8915A' : '2.5px solid transparent',
+                            background: isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+                            borderLeft: isAct && !isDisconnected ? '2.5px solid #8B5CF6' : '2.5px solid transparent',
                             opacity: isDisconnected ? 0.5 : 1,
                           }}
                           onMouseEnter={(e) => {
-                            if (!isAct || isDisconnected) e.currentTarget.style.background = '#222738'
+                            if (!isAct || isDisconnected) e.currentTarget.style.background = 'var(--panel-bg-hover)'
                           }}
                           onMouseLeave={(e) => {
-                            e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(232, 145, 90, 0.12)' : 'transparent'
+                            e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent'
                           }}
                         >
                           {isPureTerminal ? (
@@ -896,11 +901,11 @@ export default function Sidebar({
                       className="flex items-center gap-1.5 px-2 py-1.25 text-[11px] text-[#4e5270] cursor-pointer rounded-md mt-0.5"
                       onClick={() => setShowNewSession(true)}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.color = '#E8915A'
-                        e.currentTarget.style.background = 'rgba(232, 145, 90, 0.08)'
+                        e.currentTarget.style.color = 'var(--accent)'
+                        e.currentTarget.style.background = 'rgba(139, 92, 246, 0.08)'
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.color = '#4e5270'
+                        e.currentTarget.style.color = 'var(--text-tertiary)'
                         e.currentTarget.style.background = 'transparent'
                       }}
                     >
@@ -926,12 +931,24 @@ export default function Sidebar({
         <span
           className="text-[11px] text-[#4e5270] cursor-pointer"
           onClick={onOpenEnvManage}
-          onMouseEnter={(e) => e.currentTarget.style.color = '#E8915A'}
-          onMouseLeave={(e) => e.currentTarget.style.color = '#4e5270'}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
         >
           <span className="inline-flex items-center gap-1">
             <Settings size={12} />
             管理
+          </span>
+        </span>
+        <span
+          className="text-[11px] text-[#4e5270] cursor-pointer"
+          onClick={onToggleTheme}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
+          title={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+        >
+          <span className="inline-flex items-center gap-1">
+            <SunMoon size={12} />
+            {themeMode === 'dark' ? '浅色' : '深色'}
           </span>
         </span>
         <div className="flex-1" />
@@ -1177,7 +1194,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="例如：生产服务器"
-              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
             />
           </div>
 
@@ -1188,7 +1205,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
                 placeholder="192.168.1.100"
-                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
               />
             </div>
             <div className="w-20">
@@ -1197,7 +1214,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
                 placeholder="22"
-                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
               />
             </div>
           </div>
@@ -1208,7 +1225,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="root"
-              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#E8915A]"
+              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
             />
           </div>
 
@@ -1219,8 +1236,8 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 onClick={() => setAuthType('key')}
                 className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   authType === 'key'
-                    ? 'bg-[#E8915A]/20 border border-[#E8915A]/50 text-[#E8915A]'
-                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A]/50'
+                    ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 text-[#8B5CF6]'
+                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#8B5CF6]/50'
                 }`}
               >
                 🔑 密钥
@@ -1229,8 +1246,8 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 onClick={() => setAuthType('password')}
                 className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   authType === 'password'
-                    ? 'bg-[#E8915A]/20 border border-[#E8915A]/50 text-[#E8915A]'
-                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A]/50'
+                    ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 text-[#8B5CF6]'
+                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#8B5CF6]/50'
                 }`}
               >
                 🔐 密码
@@ -1245,7 +1262,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
                 value={privateKeyPath}
                 onChange={(e) => setPrivateKeyPath(e.target.value)}
                 placeholder="~/.ssh/id_rsa"
-                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm font-mono outline-none focus:border-[#E8915A]"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm font-mono outline-none focus:border-[#8B5CF6]"
               />
               <div className="text-[10px] text-[#4e5270] mt-1.5">留空则使用默认密钥 (~/.ssh/id_rsa)</div>
             </div>
@@ -1272,7 +1289,7 @@ function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
           <button
             onClick={handleSubmit}
             disabled={loading}
-            className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white text-sm font-semibold disabled:opacity-50 transition-colors"
+            className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] text-white text-sm font-semibold disabled:opacity-50 transition-colors"
           >
             {loading ? '添加中...' : '添加环境'}
           </button>
@@ -1522,7 +1539,7 @@ function NewSessionModal({
           <div className="px-5 py-2 border-b border-[#1d2030] flex items-center gap-2 text-[11px] text-[#4e5270] flex-shrink-0">
             <span
               onClick={reset}
-              className="cursor-pointer hover:text-[#E8915A]"
+              className="cursor-pointer hover:text-[#8B5CF6]"
             >
               {(() => {
                 const meta = getIntentMeta(intent)
@@ -1541,7 +1558,7 @@ function NewSessionModal({
                 <span>›</span>
                 <span
                   onClick={() => { setStep('project'); setSelectedAgent(null); setSelectedAcpAgentId(null) }}
-                  className="cursor-pointer hover:text-[#E8915A]"
+                  className="cursor-pointer hover:text-[#8B5CF6]"
                 >
                   {selectedProject.name}
                 </span>
@@ -1616,7 +1633,7 @@ function NewSessionModal({
               {/* Browse new directory */}
               <div
                 onClick={() => setBrowsing(true)}
-                className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-[#282d3e] text-[#8b8fa7] hover:border-[#E8915A] hover:text-[#E8915A] transition-colors mt-2"
+                className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-[#282d3e] text-[#8b8fa7] hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors mt-2"
               >
                 <FolderOpen size={16} className="shrink-0" />
                 <div>
@@ -1650,7 +1667,7 @@ function NewSessionModal({
                 <span className="text-[13px] font-medium">{browseEnv.name}</span>
                 <span
                   onClick={() => setBrowseEnv(null)}
-                  className="ml-auto text-[11px] text-[#4e5270] cursor-pointer hover:text-[#E8915A]"
+                  className="ml-auto text-[11px] text-[#4e5270] cursor-pointer hover:text-[#8B5CF6]"
                 >
                   更换
                 </span>
@@ -1662,7 +1679,7 @@ function NewSessionModal({
                   value={browseDir}
                   onChange={(e) => handleBrowseDirChange(e.target.value)}
                   placeholder="~/my-project  或  /home/user/project"
-                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] font-mono text-[13px] outline-none focus:border-[#E8915A]"
+                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] font-mono text-[13px] outline-none focus:border-[#8B5CF6]"
                   autoFocus
                 />
                 <div className="text-[11px] text-[#4e5270] mb-2 mt-3">Project name</div>
@@ -1670,7 +1687,7 @@ function NewSessionModal({
                   value={browseProjectName}
                   onChange={(e) => setBrowseProjectName(e.target.value)}
                   placeholder="my-project"
-                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] text-[13px] outline-none focus:border-[#E8915A]"
+                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] text-[13px] outline-none focus:border-[#8B5CF6]"
                 />
                 {browseDir.trim() && (
                   <div className="mt-3 px-4 py-3 rounded-lg bg-[#151820] border border-[#1d2030]">
@@ -1813,7 +1830,7 @@ function NewSessionModal({
           {browsing && browseEnv && browseDir.trim() && browseProjectName.trim() ? (
             <button
               onClick={handleBrowseConfirm}
-              className="px-5 py-2 rounded-lg bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white text-[12px] font-semibold shadow-lg"
+              className="px-5 py-2 rounded-lg bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] text-white text-[12px] font-semibold shadow-lg"
             >
               <span className="inline-flex items-center gap-1">
                 确认目录
@@ -1826,7 +1843,7 @@ function NewSessionModal({
               disabled={!canLaunch}
               className={`px-5 py-2 rounded-lg text-[12px] font-semibold ${
                 canLaunch
-                  ? 'bg-gradient-to-r from-[#E8915A] to-[#D46A28] text-white shadow-lg'
+                  ? 'bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] text-white shadow-lg'
                   : 'bg-[#222738] text-[#4e5270]'
               }`}
             >
@@ -1847,7 +1864,7 @@ function IntentCard({ icon: Icon, title, desc, onClick }: { icon: LucideIcon; ti
   return (
     <div
       onClick={onClick}
-      className="flex items-center gap-4 px-4 py-3.5 rounded-xl cursor-pointer bg-[#151820] border border-transparent hover:border-[#E8915A] hover:bg-[#1b1f2b] transition-all"
+      className="flex items-center gap-4 px-4 py-3.5 rounded-xl cursor-pointer bg-[#151820] border border-transparent hover:border-[#8B5CF6] hover:bg-[#1b1f2b] transition-all"
     >
       <span className="flex w-11 justify-center text-[#8b8fa7]">
         <Icon size={28} strokeWidth={1.75} />
@@ -1931,7 +1948,7 @@ function AgentCard({ agent, selected, onClick, detectedInfo }: {
       onClick={onClick}
       className={`flex items-center gap-3 px-4 py-2.5 rounded-lg cursor-pointer transition-colors ${
         selected
-          ? 'bg-[#E8915A]/[0.09] border border-[#E8915A]/60'
+          ? 'bg-[#8B5CF6]/[0.09] border border-[#8B5CF6]/60'
           : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
       }`}
     >
@@ -1971,7 +1988,7 @@ function EnvCard({ env, selected, disabled, onClick }: { env: Env; selected: boo
         disabled ? 'cursor-default opacity-35' : 'cursor-pointer'
       } ${
         selected
-          ? 'bg-[#E8915A]/[0.12] border border-[#E8915A]/60'
+          ? 'bg-[#8B5CF6]/[0.12] border border-[#8B5CF6]/60'
           : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
       } transition-colors`}
     >
@@ -1984,7 +2001,7 @@ function EnvCard({ env, selected, disabled, onClick }: { env: Env; selected: boo
       {!disabled && (
         <div className="w-[7px] h-[7px] rounded-full bg-[#4ADE80] shadow-sm shadow-[#4ADE80]" />
       )}
-      {selected && <Check size={16} className="text-[#E8915A]" />}
+      {selected && <Check size={16} className="text-[#8B5CF6]" />}
     </div>
   )
 }

@@ -14,7 +14,7 @@ interface TerminalViewProps {
 
 const AGENT_META = {
   claude: { label: 'Claude Code', color: '#E8915A' },
-  codex: { label: 'Codex', color: '#E5E7EB' },
+  codex: { label: 'Codex', color: 'var(--codex-color)' },
   gemini: { label: 'Gemini CLI', color: '#60A5FA' },
   opencode: { label: 'OpenCode', color: '#78716C' },
   acp: { label: 'ACP Agent', color: '#4ADE80' },
@@ -22,14 +22,17 @@ const AGENT_META = {
 } as const
 
 const C = {
-  bg0: '#08090d', bg1: '#0e1015', bg2: '#151820', bg3: '#1b1f2b',
-  bds: '#1d2030',
-  t1: '#e2e4ed', t3: '#4e5270',
+  bg0: 'var(--terminal-bg)', bg1: 'var(--panel-bg)', bg2: 'var(--panel-bg-elevated)', bg3: 'var(--panel-bg-hover)',
+  bds: 'var(--panel-border)',
+  t1: 'var(--text-primary)', t3: 'var(--text-tertiary)',
 }
+
+const withAlpha = (color: string, percent: number) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`
 
 const getAgentMeta = (session: Session | undefined) => {
   if (!session?.agentId) {
-    return { label: 'Terminal', color: '#8b8fa7' }
+    return { label: 'Terminal', color: 'var(--text-secondary)' }
   }
 
   if (session.agentId === 'acp') {
@@ -42,7 +45,7 @@ const getAgentMeta = (session: Session | undefined) => {
 
   return AGENT_META[session.agentId as keyof typeof AGENT_META] ?? {
     label: session.agentId,
-    color: '#8b8fa7',
+    color: 'var(--text-secondary)',
   }
 }
 
@@ -248,14 +251,17 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
   const chatPaneStyle = getChatPaneStyle(viewMode)
 
   return (
-    <div ref={panelRef} className="flex-1 bg-[#08090d] relative overflow-hidden flex flex-col min-h-0">
+    <div ref={panelRef} className="flex-1 relative overflow-hidden flex flex-col min-h-0" style={{ background: C.bg0 }}>
       {activeSession && statusTone && sessionModeMeta && (
-        <div className="px-4 py-3 border-b border-[#1d2030] bg-[#0e1015] flex items-center gap-3 shrink-0">
+        <div
+          className="px-4 py-3 border-b flex items-center gap-3 shrink-0"
+          style={{ background: C.bg1, borderColor: 'var(--panel-border)' }}
+        >
           <div
             className="w-10 h-10 rounded-xl border flex items-center justify-center shrink-0"
             style={{
-              background: `${agentMeta.color}1c`,
-              borderColor: `${agentMeta.color}30`,
+              background: withAlpha(agentMeta.color, 11),
+              borderColor: withAlpha(agentMeta.color, 19),
               color: agentMeta.color,
             }}
           >
@@ -371,7 +377,7 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
       </div>
 
       {!activeSession && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#08090d]">
+        <div className="absolute inset-0 flex items-center justify-center" style={{ background: C.bg0 }}>
           <div className="text-center max-w-sm px-6">
             <div className="mx-auto mb-4 w-14 h-14 rounded-2xl border border-[#282d3e] bg-[#151820] flex items-center justify-center text-[#8b8fa7]">
               <Monitor size={24} />

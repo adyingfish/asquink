@@ -133,20 +133,7 @@ export class TerminalController {
     }
 
     const terminal = new Terminal({
-      theme: {
-        background: '#0f0f0f',
-        foreground: '#e0e0e0',
-        cursor: '#e0e0e0',
-        selectionBackground: '#404040',
-        black: '#000000',
-        red: '#ff5555',
-        green: '#50fa7b',
-        yellow: '#f1fa8c',
-        blue: '#bd93f9',
-        magenta: '#ff79c6',
-        cyan: '#8be9fd',
-        white: '#bfbfbf',
-      },
+      theme: this.getTerminalTheme(),
       fontSize: 14,
       fontFamily: '"JetBrains Mono", "Fira Code", "Cascadia Code", monospace',
       cursorBlink: true,
@@ -524,5 +511,22 @@ export class TerminalController {
       sessionType: session.type,
       data: processedText,
     }).catch(console.error)
+  }
+
+  private getTerminalTheme() {
+    return {
+      background: '#141922',
+      foreground: '#e0e0e0',
+      cursor: '#e0e0e0',
+      selectionBackground: 'rgba(128, 138, 156, 0.35)',
+      black: '#000000',
+      red: '#ff5555',
+      green: '#50fa7b',
+      yellow: '#f1fa8c',
+      blue: '#bd93f9',
+      magenta: '#ff79c6',
+      cyan: '#8be9fd',
+      white: '#bfbfbf',
+    }
   }
 }

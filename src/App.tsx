@@ -81,6 +81,11 @@ function App() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [showEnvManage, setShowEnvManage] = useState(false)
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    if (typeof window === 'undefined') return 'dark'
+    const saved = window.localStorage.getItem('asquink-theme-mode')
+    return saved === 'light' ? 'light' : 'dark'
+  })
   const [refreshKey, setRefreshKey] = useState(0)
   const terminalControllerRef = useRef<TerminalController | null>(null)
   const startupCacheRefreshedRef = useRef(false)
@@ -100,6 +105,11 @@ function App() {
       terminalControllerRef.current?.dispose()
     }
   }, [])
+
+  useEffect(() => {
+    window.localStorage.setItem('asquink-theme-mode', themeMode)
+    document.documentElement.setAttribute('data-theme', themeMode)
+  }, [themeMode])
 
   const loadHistoricalSessions = async () => {
     try {
@@ -319,7 +329,7 @@ function App() {
     terminalControllerRef.current?.getPreferredPtySize() ?? { cols: 80, rows: 24 }
 
   return (
-    <div className="h-screen w-screen flex bg-dark-900 text-gray-200 overflow-hidden">
+    <div className={`app-shell h-screen w-screen flex overflow-hidden ${themeMode === 'light' ? 'theme-light' : 'theme-dark'}`}>
       <Sidebar
         onAddSession={addSession}
         onSessionStatusChange={updateSessionStatus}
@@ -330,6 +340,8 @@ function App() {
         onReconnectSession={handleReconnectSession}
         isLoading={isLoading}
         onOpenEnvManage={() => setShowEnvManage(true)}
+        themeMode={themeMode}
+        onToggleTheme={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
         refreshKey={refreshKey}
         getPreferredPtySize={getPreferredPtySize}
       />

@@ -19,7 +19,7 @@ import type { Env, Project, SessionRecord, AgentInfo } from '../App'
 // Agent definitions with colors - for ACP Agent management
 const AGENT_REGISTRY: Record<string, { name: string; color: string; icon: string; install: string; docs: string }> = {
   claude:   { name: "Claude Code",  color: "#E8915A", icon: "🟠", install: "npm install -g @anthropic-ai/claude-code", docs: "https://docs.anthropic.com/claude-code" },
-  codex:    { name: "Codex CLI",    color: "#E5E7EB", icon: "🟢", install: "npm install -g @openai/codex",             docs: "https://github.com/openai/codex" },
+  codex:    { name: "Codex CLI",    color: "var(--codex-color)", icon: "🟢", install: "npm install -g @openai/codex",             docs: "https://github.com/openai/codex" },
   gemini:   { name: "Gemini CLI",   color: "#60A5FA", icon: "🔵", install: "npm install -g @google/gemini-cli",        docs: "https://github.com/google/gemini-cli" },
   opencode: { name: "OpenCode",     color: "#78716C", icon: "🟣", install: "npm install -g opencode",                  docs: "https://github.com/opencode-ai/opencode" },
 }
@@ -27,7 +27,7 @@ const AGENT_REGISTRY: Record<string, { name: string; color: string; icon: string
 // Agent definitions with colors - for env agent scanning
 const AGENTS = [
   { id: 'claude', name: 'Claude Code', short: 'Claude', color: '#E8915A', needsProject: true },
-  { id: 'codex', name: 'Codex', short: 'Codex', color: '#E5E7EB', needsProject: true },
+  { id: 'codex', name: 'Codex', short: 'Codex', color: 'var(--codex-color)', needsProject: true },
   { id: 'gemini', name: 'Gemini CLI', short: 'Gemini', color: '#60A5FA', needsProject: true },
   { id: 'opencode', name: 'OpenCode', short: 'OpenCode', color: '#78716C', needsProject: true },
   { id: 'openclaw', name: 'OpenClaw', short: 'OpenClaw', color: '#EF4444', needsProject: false },
@@ -121,6 +121,9 @@ function EnvTypeIcon({ envType, size = 16, className = '' }: { envType: Env['typ
   return <Icon size={size} className={className} />
 }
 
+const withAlpha = (color: string, percent: number) =>
+  `color-mix(in srgb, ${color} ${percent}%, transparent)`
+
 // Badge component for status display
 const Badge = ({ status }: { status: string }) => {
   const m: Record<string, { bg: string; c: string; t: string }> = {
@@ -160,7 +163,7 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
       <div className="flex items-center gap-3.5 mb-6">
         <div
           className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-          style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}40` }}
+          style={{ background: withAlpha(reg.color, 9), border: `1px solid ${withAlpha(reg.color, 25)}` }}
         >
           <AgentIcon size={24} style={{ color: reg.color }} />
         </div>
@@ -183,7 +186,7 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
         {!isConnected && isInstalled && (
           <button
             className="px-3.5 py-2 rounded-lg text-xs font-medium cursor-pointer transition-colors"
-            style={{ border: `1px solid ${reg.color}50`, background: `${reg.color}12`, color: reg.color }}
+            style={{ border: `1px solid ${withAlpha(reg.color, 31)}`, background: withAlpha(reg.color, 7), color: reg.color }}
           >
             🔗 连接
           </button>
@@ -212,7 +215,7 @@ function AgentDetail({ agent }: { agent: AcpAgent }) {
             </span>
           </div>
           <div className="mt-3.5">
-            <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#E8915A] no-underline hover:underline">
+            <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#8B5CF6] no-underline hover:underline">
               <span className="inline-flex items-center gap-1">
                 <BookOpen size={14} />
                 查看文档
@@ -313,7 +316,7 @@ function RealAgentDetail({
       <div className="flex items-center gap-3.5 mb-6">
         <div
           className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
-          style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}40` }}
+          style={{ background: withAlpha(reg.color, 9), border: `1px solid ${withAlpha(reg.color, 25)}` }}
         >
           <AgentIcon size={24} style={{ color: reg.color }} />
         </div>
@@ -329,7 +332,7 @@ function RealAgentDetail({
         </div>
         <button
           onClick={onRefresh}
-          className="px-3.5 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors inline-flex items-center gap-1.5"
+          className="px-3.5 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs cursor-pointer hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors inline-flex items-center gap-1.5"
         >
           <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
           重新检测
@@ -356,7 +359,7 @@ function RealAgentDetail({
             </span>
           </div>
           <div className="mt-3.5">
-            <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#E8915A] no-underline hover:underline">
+            <a href={reg.docs} target="_blank" rel="noreferrer" className="text-[11px] text-[#8B5CF6] no-underline hover:underline">
               <span className="inline-flex items-center gap-1">
                 <BookOpen size={14} />
                 文档
@@ -409,7 +412,7 @@ function RealAgentDetail({
                   href={reg.docs}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs no-underline hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+                  className="px-3.5 py-1.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs no-underline hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors"
                 >
                   文档
                 </a>
@@ -805,7 +808,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       <div className="px-6 py-4 border-b border-[#1d2030] flex items-center gap-3">
         <span
           onClick={onBack}
-          className="text-sm text-[#4e5270] cursor-pointer px-2 py-1 rounded-md hover:bg-[#222738] hover:text-[#E8915A] transition-colors"
+          className="text-sm text-[#4e5270] cursor-pointer px-2 py-1 rounded-md hover:bg-[#222738] hover:text-[#8B5CF6] transition-colors"
         >
           ←
         </span>
@@ -833,7 +836,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 className="flex-1 text-center py-2.5 text-xs font-medium cursor-pointer transition-colors"
                 style={{
                   color: activeTab === t.id ? '#e2e4ed' : '#4e5270',
-                  borderBottom: activeTab === t.id ? '2px solid #E8915A' : '2px solid transparent',
+                  borderBottom: activeTab === t.id ? '2px solid #8B5CF6' : '2px solid transparent',
                   background: activeTab === t.id ? '#151820' : 'transparent',
                 }}
               >
@@ -868,7 +871,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       onClick={() => setSelectedEnvId(env.id)}
                       className={`flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors ${
                         isSelected
-                          ? 'bg-[#E8915A]/12 border border-[#E8915A]/40'
+                          ? 'bg-[#8B5CF6]/12 border border-[#8B5CF6]/40'
                           : 'border border-transparent hover:bg-[#222738]'
                       }`}
                     >
@@ -892,7 +895,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
 
                 <div
                   onClick={() => setShowAddEnv(true)}
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg mt-2 border border-dashed border-[#282d3e] cursor-pointer text-[#4e5270] text-sm hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+                  className="flex items-center gap-2 px-3 py-2.5 rounded-lg mt-2 border border-dashed border-[#282d3e] cursor-pointer text-[#4e5270] text-sm hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors"
                 >
                   <span className="text-base w-7 text-center">＋</span>
                   <span>添加新环境</span>
@@ -915,13 +918,13 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       onClick={() => setSelectedAgentKey(agentKey)}
                       className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors"
                       style={{
-                        background: isSelected ? `${reg.color}15` : 'transparent',
-                        border: isSelected ? `1px solid ${reg.color}40` : '1px solid transparent',
+                        background: isSelected ? withAlpha(reg.color, 8) : 'transparent',
+                        border: isSelected ? `1px solid ${withAlpha(reg.color, 25)}` : '1px solid transparent',
                       }}
                     >
                       <div
                         className="w-9 h-9 rounded-md flex items-center justify-center text-base"
-                        style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}30` }}
+                        style={{ background: withAlpha(reg.color, 9), border: `1px solid ${withAlpha(reg.color, 19)}` }}
                       >
                         {(() => {
                           const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
@@ -973,7 +976,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       </select>
                       <button
                         onClick={() => void saveAcpWslConfig()}
-                        className="w-20 shrink-0 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-[12px] hover:border-[#E8915A] hover:text-[#E8915A] transition-colors"
+                        className="w-20 shrink-0 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-[12px] hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors"
                       >
                         应用
                       </button>
@@ -1001,13 +1004,13 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       onClick={() => setSelectedAgentKey(agentKey)}
                       className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer mb-1 transition-colors"
                       style={{
-                        background: isSelected ? `${reg.color}15` : 'transparent',
-                        border: isSelected ? `1px solid ${reg.color}40` : '1px solid transparent',
+                        background: isSelected ? withAlpha(reg.color, 8) : 'transparent',
+                        border: isSelected ? `1px solid ${withAlpha(reg.color, 25)}` : '1px solid transparent',
                       }}
                     >
                       <div
                         className="w-9 h-9 rounded-md flex items-center justify-center text-base"
-                        style={{ background: `${reg.color}18`, border: `1px solid ${reg.color}30` }}
+                        style={{ background: withAlpha(reg.color, 9), border: `1px solid ${withAlpha(reg.color, 19)}` }}
                       >
                         {(() => {
                           const AgentIcon = AGENT_ICONS[agent.id] ?? Bot
@@ -1088,7 +1091,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   <button
                     onClick={() => testConnection(selectedEnv)}
                     disabled={testingConnection === selectedEnv.id}
-                    className="px-4 py-2.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs font-medium cursor-pointer hover:border-[#E8915A] hover:text-[#E8915A] transition-colors disabled:opacity-50 whitespace-nowrap"
+                    className="px-4 py-2.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-xs font-medium cursor-pointer hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors disabled:opacity-50 whitespace-nowrap"
                   >
                     {testingConnection === selectedEnv.id ? '⏳ 测试中...' : '🔗 测试连接'}
                   </button>
@@ -1158,7 +1161,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 {(selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl' || selectedEnv?.type === 'ssh') && !scanningAgents && (
                   <button
                     onClick={scanAgents}
-                    className="text-[10px] text-[#8b8fa7] hover:text-[#E8915A] transition-colors"
+                    className="text-[10px] text-[#8b8fa7] hover:text-[#8B5CF6] transition-colors"
                   >
                     重新扫描
                   </button>
@@ -1229,7 +1232,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                           )}
                         </div>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: `${agent.color}20`, color: agent.color }}>
+                      <span className="text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: withAlpha(agent.color, 13), color: agent.color }}>
                         {agent.short}
                       </span>
                     </div>
@@ -1300,7 +1303,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 onClick={() => setAddEnvType('ssh')}
                 className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
                   addEnvType === 'ssh'
-                    ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                    ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6] text-[#8B5CF6]'
                     : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
                 }`}
               >
@@ -1314,7 +1317,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   onClick={() => setAddEnvType('wsl')}
                   className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
                     addEnvType === 'wsl'
-                      ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                      ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6] text-[#8B5CF6]'
                       : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
                   }`}
                 >
@@ -1334,7 +1337,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                   value={addEnvForm.name}
                   onChange={e => setAddEnvForm({ ...addEnvForm, name: e.target.value })}
                   placeholder={addEnvType === 'wsl' ? '例如：Ubuntu 开发环境' : '例如：生产服务器'}
-                  className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                  className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                 />
               </div>
 
@@ -1348,7 +1351,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         value={addEnvForm.host}
                         onChange={e => setAddEnvForm({ ...addEnvForm, host: e.target.value })}
                         placeholder="192.168.1.100"
-                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                       />
                     </div>
                     <div>
@@ -1358,7 +1361,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         value={addEnvForm.port}
                         onChange={e => setAddEnvForm({ ...addEnvForm, port: e.target.value })}
                         placeholder="22"
-                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                       />
                     </div>
                   </div>
@@ -1370,7 +1373,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       value={addEnvForm.username}
                       onChange={e => setAddEnvForm({ ...addEnvForm, username: e.target.value })}
                       placeholder="root"
-                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                     />
                   </div>
 
@@ -1381,7 +1384,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         onClick={() => setAddEnvForm({ ...addEnvForm, auth_type: 'key' })}
                         className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
                           addEnvForm.auth_type === 'key'
-                            ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                            ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6] text-[#8B5CF6]'
                             : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
                         }`}
                       >
@@ -1391,7 +1394,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         onClick={() => setAddEnvForm({ ...addEnvForm, auth_type: 'password' })}
                         className={`flex-1 px-3 py-2 rounded text-sm transition-colors ${
                           addEnvForm.auth_type === 'password'
-                            ? 'bg-[#E8915A]/20 border border-[#E8915A] text-[#E8915A]'
+                            ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6] text-[#8B5CF6]'
                             : 'bg-[#161822] border border-[#282d3e] text-[#8b8fa7]'
                         }`}
                       >
@@ -1408,7 +1411,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                         value={addEnvForm.private_key_path}
                         onChange={e => setAddEnvForm({ ...addEnvForm, private_key_path: e.target.value })}
                         placeholder="~/.ssh/id_rsa"
-                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                        className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                       />
                     </div>
                   )}
@@ -1421,7 +1424,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                     <select
                       value={addEnvForm.wsl_distro}
                       onChange={e => setAddEnvForm({ ...addEnvForm, wsl_distro: e.target.value })}
-                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                     >
                       <option value="">选择发行版...</option>
                       {wslDistros.map(d => (
@@ -1439,7 +1442,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                       value={addEnvForm.wsl_user}
                       onChange={e => setAddEnvForm({ ...addEnvForm, wsl_user: e.target.value })}
                       placeholder="留空使用默认用户"
-                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#E8915A] focus:outline-none"
+                      className="w-full px-3 py-2 bg-[#161822] border border-[#282d3e] rounded text-sm focus:border-[#8B5CF6] focus:outline-none"
                     />
                   </div>
                 </>
@@ -1468,7 +1471,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
               </button>
               <button
                 onClick={handleAddEnv}
-                className="flex-1 px-3 py-2 bg-[#E8915A] rounded text-sm text-white hover:bg-[#d07a47] transition-colors"
+                className="flex-1 px-3 py-2 bg-[#8B5CF6] rounded text-sm text-white hover:bg-[#5B21B6] transition-colors"
               >
                 添加
               </button>

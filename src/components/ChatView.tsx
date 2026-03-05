@@ -6,14 +6,14 @@ import type { Session } from '../App'
 import { getAcpRuntimeDefinition } from '../utils/agents'
 
 const C = {
-  bg0: '#08090d',
-  bg2: '#151820',
-  bg3: '#1b1f2b',
-  bd: '#282d3e',
-  bds: '#1d2030',
-  t1: '#e2e4ed',
-  t2: '#8b8fa7',
-  t3: '#4e5270',
+  bg0: 'var(--app-bg)',
+  bg2: 'var(--panel-bg-elevated)',
+  bg3: 'var(--panel-bg-hover)',
+  bd: 'var(--panel-border-strong)',
+  bds: 'var(--panel-border)',
+  t1: 'var(--text-primary)',
+  t2: 'var(--text-secondary)',
+  t3: 'var(--text-tertiary)',
   grn: '#4ADE80',
   red: '#F87171',
   blu: '#60A5FA',
