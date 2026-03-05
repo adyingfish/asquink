@@ -89,6 +89,7 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const terminalControllerRef = useRef<TerminalController | null>(null)
   const startupCacheRefreshedRef = useRef(false)
+  const reconnectingSessionIdsRef = useRef<Set<string>>(new Set())
 
   if (!terminalControllerRef.current) {
     terminalControllerRef.current = new TerminalController()
@@ -229,6 +230,11 @@ function App() {
 
   // Reconnect to a disconnected session
   const reconnectSession = async (oldSession: Session) => {
+    if (reconnectingSessionIdsRef.current.has(oldSession.id)) {
+      return
+    }
+    reconnectingSessionIdsRef.current.add(oldSession.id)
+
     // Update status to connecting
     setSessions(prev => prev.map(s =>
       s.id === oldSession.id ? { ...s, status: 'connecting' as const, isReconnect: false } : s
@@ -312,6 +318,8 @@ function App() {
       setSessions(prev => prev.map(s =>
         s.id === oldSession.id ? { ...s, status: 'disconnected' as const, isReconnect: true } : s
       ))
+    } finally {
+      reconnectingSessionIdsRef.current.delete(oldSession.id)
     }
   }
 
@@ -321,6 +329,7 @@ function App() {
   }
 
   const handleReconnectSession = (session: Session) => {
+    terminalControllerRef.current?.resetSession(session.id)
     reconnectSession(session)
     setShowEnvManage(false)
   }

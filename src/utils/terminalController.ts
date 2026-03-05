@@ -117,6 +117,25 @@ export class TerminalController {
     return this.preferredPtyDims
   }
 
+  resetSession(sessionId: string): void {
+    const state = this.states.get(sessionId)
+    if (!state) {
+      return
+    }
+
+    state.pendingOutput = ''
+    state.receivedOutput = false
+    state.layoutReady = false
+    state.lastTerminalDims = { cols: 0, rows: 0 }
+
+    if (state.opened) {
+      state.terminal.reset()
+      if (this.activeSessionId === sessionId) {
+        this.scheduleResize(sessionId)
+      }
+    }
+  }
+
   dispose(): void {
     for (const state of this.states.values()) {
       this.disposeState(state)
