@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { AlertTriangle, ChevronRight, LoaderCircle, MessageSquareText } from 'lucide-react'
@@ -182,6 +182,7 @@ export default function ChatView({ session }: ChatViewProps) {
   const [permissionQueue, setPermissionQueue] = useState<AcpPermissionRequestPayload[]>([])
   const [resolvingPermission, setResolvingPermission] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const draftInputRef = useRef<HTMLTextAreaElement>(null)
 
   const isAcp = session?.agentId === 'acp'
 
@@ -197,6 +198,19 @@ export default function ChatView({ session }: ChatViewProps) {
   useEffect(() => {
     setPermissionQueue([])
   }, [isAcp, session?.id])
+
+  const resizeDraftInput = (element?: HTMLTextAreaElement | null) => {
+    if (!element) return
+    element.style.height = 'auto'
+    const lineHeight = Number.parseFloat(window.getComputedStyle(element).lineHeight) || 20
+    const maxHeight = lineHeight * 10
+    element.style.height = `${Math.min(element.scrollHeight, maxHeight)}px`
+    element.style.overflowY = element.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }
+
+  useLayoutEffect(() => {
+    resizeDraftInput(draftInputRef.current)
+  }, [draft])
 
   useEffect(() => {
     let cancelled = false
@@ -455,8 +469,12 @@ export default function ChatView({ session }: ChatViewProps) {
       <div className="shrink-0 px-3 py-2.5 border-t" style={{ background: C.bg0, borderColor: C.bds }}>
         <div className="flex items-end gap-2 px-3 py-2.5 rounded-lg border" style={{ background: C.bg2, borderColor: C.bds }}>
           <textarea
+            ref={draftInputRef}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setDraft(event.target.value)
+              resizeDraftInput(event.target)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault()
