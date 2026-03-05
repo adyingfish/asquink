@@ -1590,7 +1590,7 @@ function NewSessionModal({
           {step === 'project' && !browsing && (
             <>
               <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">最近使用的项目</div>
-              {projects.slice(0, 5).map((p) => {
+              {projects.slice(0, 3).map((p) => {
                 const env = envs.find(e => e.id === p.env_id)
                 const isOffline = env?.status === 'offline'
                 return (
