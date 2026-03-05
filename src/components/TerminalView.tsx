@@ -223,11 +223,7 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const availableViews = activeSession?.mode === 'chat'
     ? [{ id: 'chat' as const, icon: MessageSquareText, label: '对话' }]
-    : [
-        { id: 'terminal' as const, icon: Monitor, label: '终端' },
-        { id: 'split' as const, icon: Command, label: '分屏' },
-        { id: 'chat' as const, icon: MessageSquareText, label: '对话' },
-      ]
+    : [{ id: 'terminal' as const, icon: Monitor, label: '终端' }]
 
   useEffect(() => {
     if (!activeSession) {
@@ -235,12 +231,12 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
       return
     }
 
-    setViewMode((current) => {
+    setViewMode(() => {
       if (activeSession.mode === 'chat') {
         return 'chat'
       }
 
-      return current === 'chat' ? 'terminal' : current
+      return 'terminal'
     })
   }, [activeSessionId, activeSession?.mode])
 
@@ -358,18 +354,6 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
             />
           ))}
         </div>
-
-        <div
-          className="absolute top-0 bottom-0 w-[1px] shrink-0"
-          style={{
-            background: C.bds,
-            left: '50%',
-            opacity: viewMode === 'split' ? 1 : 0,
-            transform: 'translateX(-50%)',
-            transition: `opacity ${PANE_TRANSITION}`,
-            visibility: viewMode === 'split' ? 'visible' : 'hidden',
-          }}
-        />
 
         <div
           className="absolute top-0 bottom-0 min-h-0 overflow-hidden"
