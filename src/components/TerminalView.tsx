@@ -176,21 +176,16 @@ const getChatPaneStyle = (viewMode: 'terminal' | 'split' | 'chat') => {
 
 export default function TerminalView({ controller, sessions, activeSessionId }: TerminalViewProps) {
   const panelRef = useRef<HTMLDivElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
+  const terminalContainerRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const [viewMode, setViewMode] = useState<'terminal' | 'split' | 'chat'>('terminal')
 
   useEffect(() => {
-    if (!containerRef.current) {
-      return
-    }
-
-    controller.mount(containerRef.current)
     controller.setContext(sessions, activeSessionId)
     controller.scheduleResize()
   }, [controller, sessions, activeSessionId])
 
   useEffect(() => {
-    if (!panelRef.current || !containerRef.current) {
+    if (!panelRef.current) {
       return
     }
 
@@ -200,13 +195,30 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
 
     const observer = new ResizeObserver(handleResize)
     observer.observe(panelRef.current)
-    observer.observe(containerRef.current)
+    for (const node of terminalContainerRefs.current.values()) {
+      observer.observe(node)
+    }
     handleResize()
 
     return () => {
       observer.disconnect()
     }
-  }, [controller, viewMode])
+  }, [controller, viewMode, sessions])
+
+  const visibleTerminalSessions = sessions
+
+  const bindTerminalContainer = (sessionId: string) => (node: HTMLDivElement | null) => {
+    if (!node) {
+      terminalContainerRefs.current.delete(sessionId)
+      return
+    }
+
+    terminalContainerRefs.current.set(sessionId, node)
+    controller.mountSession(sessionId, node)
+    if (activeSessionId === sessionId) {
+      controller.scheduleResize(sessionId)
+    }
+  }
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
   const availableViews = activeSession?.mode === 'chat'
@@ -334,11 +346,17 @@ export default function TerminalView({ controller, sessions, activeSessionId }: 
             ...terminalPaneStyle,
           }}
         >
-          <div
-            ref={containerRef}
-            className="w-full h-full min-h-0"
-            style={{ display: activeSession ? 'block' : 'none' }}
-          />
+          {visibleTerminalSessions.map((session) => (
+            <div
+              key={session.id}
+              ref={bindTerminalContainer(session.id)}
+              className="absolute inset-0 w-full h-full min-h-0"
+              style={{
+                display: activeSessionId === session.id ? 'block' : 'none',
+                pointerEvents: activeSessionId === session.id ? 'auto' : 'none',
+              }}
+            />
+          ))}
         </div>
 
         <div

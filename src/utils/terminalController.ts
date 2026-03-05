@@ -9,148 +9,129 @@ function isVisible(element: HTMLElement): boolean {
   return element.offsetParent !== null && element.getClientRects().length > 0
 }
 
+interface TerminalState {
+  sessionId: string
+  terminal: Terminal
+  fitAddon: FitAddon
+  container: HTMLDivElement | null
+  opened: boolean
+  pendingOutput: string
+  unlisten: (() => void) | null
+  dataDisposable: { dispose: () => void } | null
+  parsedDisposable: { dispose: () => void } | null
+  pasteTarget: HTMLTextAreaElement | null
+  handlePaste: ((event: ClipboardEvent) => void) | null
+  resizeFrame: number | null
+  resizeRetry: number | null
+  renderSyncFrame: number | null
+  renderSyncRetry: number | null
+  outputIdleSync: number | null
+  lastTerminalDims: { cols: number; rows: number }
+  layoutReady: boolean
+  receivedOutput: boolean
+}
+
 export class TerminalController {
-  private terminal: Terminal | null = null
-  private fitAddon: FitAddon | null = null
-  private container: HTMLDivElement | null = null
   private sessions: Session[] = []
   private activeSessionId: string | null = null
-  private lastBoundSessionId: string | null = null
-  private unlisten: (() => void) | null = null
-  private disposable: { dispose: () => void } | null = null
-  private parsedDisposable: { dispose: () => void } | null = null
-  private listenerState = { cancelled: false, sessionId: null as string | null }
-  private scrollTimeout: number | null = null
-  private resizeFrame: number | null = null
-  private resizeRetry: number | null = null
-  private renderSyncFrame: number | null = null
-  private renderSyncRetry: number | null = null
-  private outputIdleSync: number | null = null
-  private lastTerminalDims = { cols: 0, rows: 0 }
+  private states = new Map<string, TerminalState>()
   private preferredPtyDims = { cols: 80, rows: 24 }
   private isCopying = false
-  private pasteTarget: HTMLTextAreaElement | null = null
-  private layoutReady = false
-  private receivedOutputForSession = false
-  private handlePaste: ((event: ClipboardEvent) => void) | null = null
 
-  mount(container: HTMLDivElement): void {
-    if (this.container === container && this.terminal) {
+  mountSession(sessionId: string, container: HTMLDivElement): void {
+    const state = this.getOrCreateState(sessionId)
+    if (state.container === container && state.opened) {
       return
     }
 
-    this.container = container
-
-    if (!this.terminal) {
-      this.initializeTerminal()
+    state.container = container
+    if (!state.opened) {
+      state.terminal.open(container)
+      state.opened = true
+      this.bindPasteHandlers(state)
+      if (state.pendingOutput) {
+        state.terminal.write(state.pendingOutput)
+        state.pendingOutput = ''
+      }
     }
 
-    if (!this.terminal || !this.container || this.container.childElementCount > 0) {
-      return
-    }
-
-    this.terminal.open(this.container)
-    this.bindPasteHandlers()
-    this.scheduleResize()
-    window.setTimeout(() => this.scheduleResize(), 150)
+    this.scheduleResize(sessionId)
+    window.setTimeout(() => this.scheduleResize(sessionId), 150)
   }
 
   setContext(sessions: Session[], activeSessionId: string | null): void {
     this.sessions = sessions
     this.activeSessionId = activeSessionId
-
-    if (!this.terminal) {
-      return
-    }
+    this.pruneStates()
 
     if (!activeSessionId) {
-      this.lastBoundSessionId = null
-      this.teardownSessionBinding()
       return
     }
 
-    const activeSession = this.sessions.find((session) => session.id === activeSessionId)
-    if (!activeSession) {
-      this.lastBoundSessionId = null
-      this.teardownSessionBinding()
+    const activeState = this.states.get(activeSessionId)
+    if (!activeState) {
       return
     }
 
-    if (this.lastBoundSessionId !== activeSessionId) {
-      this.bindActiveSession(activeSessionId)
-    } else {
-      this.scheduleResize()
+    this.scheduleResize(activeSessionId)
+    if (activeState.opened) {
+      activeState.terminal.focus()
     }
   }
 
-  scheduleResize(): void {
-    if (!this.container) {
+  scheduleResize(sessionId?: string): void {
+    const targetSessionId = sessionId ?? this.activeSessionId
+    if (!targetSessionId) {
       return
     }
 
-    if (this.resizeFrame) {
-      cancelAnimationFrame(this.resizeFrame)
-    }
-    if (this.resizeRetry) {
-      clearTimeout(this.resizeRetry)
+    const state = this.states.get(targetSessionId)
+    if (!state || !state.container) {
+      return
     }
 
-    this.resizeFrame = window.requestAnimationFrame(() => {
-      this.resizeNow()
-      this.resizeRetry = window.setTimeout(() => this.resizeNow(), 120)
+    if (state.resizeFrame) {
+      cancelAnimationFrame(state.resizeFrame)
+    }
+    if (state.resizeRetry) {
+      clearTimeout(state.resizeRetry)
+    }
+
+    state.resizeFrame = window.requestAnimationFrame(() => {
+      this.resizeNow(state)
+      state.resizeRetry = window.setTimeout(() => this.resizeNow(state), 120)
     })
   }
 
   getPreferredPtySize(): { cols: number; rows: number } {
-    this.ensureLayoutReady()
-
-    if (this.terminal && this.terminal.cols > 0 && this.terminal.rows > 0) {
-      return { cols: this.terminal.cols, rows: this.terminal.rows }
+    if (this.activeSessionId) {
+      const activeState = this.states.get(this.activeSessionId)
+      if (activeState) {
+        this.ensureLayoutReady(activeState)
+        if (activeState.terminal.cols > 0 && activeState.terminal.rows > 0) {
+          return { cols: activeState.terminal.cols, rows: activeState.terminal.rows }
+        }
+      }
     }
 
     return this.preferredPtyDims
   }
 
   dispose(): void {
-    this.teardownSessionBinding()
-    this.removePasteHandlers()
-
-    if (this.resizeFrame) {
-      cancelAnimationFrame(this.resizeFrame)
-      this.resizeFrame = null
+    for (const state of this.states.values()) {
+      this.disposeState(state)
     }
-    if (this.resizeRetry) {
-      clearTimeout(this.resizeRetry)
-      this.resizeRetry = null
-    }
-    if (this.renderSyncFrame) {
-      cancelAnimationFrame(this.renderSyncFrame)
-      this.renderSyncFrame = null
-    }
-    if (this.renderSyncRetry) {
-      clearTimeout(this.renderSyncRetry)
-      this.renderSyncRetry = null
-    }
-    if (this.outputIdleSync) {
-      clearTimeout(this.outputIdleSync)
-      this.outputIdleSync = null
-    }
-    if (this.scrollTimeout) {
-      clearTimeout(this.scrollTimeout)
-      this.scrollTimeout = null
-    }
-
-    this.terminal?.dispose()
-    this.terminal = null
-    this.fitAddon = null
-    this.container = null
-    this.lastBoundSessionId = null
-    this.lastTerminalDims = { cols: 0, rows: 0 }
-    this.layoutReady = false
-    this.receivedOutputForSession = false
+    this.states.clear()
+    this.sessions = []
+    this.activeSessionId = null
   }
 
-  private initializeTerminal(): void {
+  private getOrCreateState(sessionId: string): TerminalState {
+    const existing = this.states.get(sessionId)
+    if (existing) {
+      return existing
+    }
+
     const terminal = new Terminal({
       theme: {
         background: '#0f0f0f',
@@ -175,6 +156,28 @@ export class TerminalController {
 
     const fitAddon = new FitAddon()
     terminal.loadAddon(fitAddon)
+
+    const state: TerminalState = {
+      sessionId,
+      terminal,
+      fitAddon,
+      container: null,
+      opened: false,
+      pendingOutput: '',
+      unlisten: null,
+      dataDisposable: null,
+      parsedDisposable: null,
+      pasteTarget: null,
+      handlePaste: null,
+      resizeFrame: null,
+      resizeRetry: null,
+      renderSyncFrame: null,
+      renderSyncRetry: null,
+      outputIdleSync: null,
+      lastTerminalDims: { cols: 0, rows: 0 },
+      layoutReady: false,
+      receivedOutput: false,
+    }
 
     terminal.onKey(({ domEvent, key }) => {
       if (domEvent.ctrlKey && (domEvent.key === 'c' || key === '\x03')) {
@@ -203,246 +206,251 @@ export class TerminalController {
         return
       }
 
-      if (domEvent.ctrlKey && (domEvent.key === 'v' || (domEvent.shiftKey && domEvent.key === 'V'))) {
+      if (domEvent.ctrlKey && (domEvent.key.toLowerCase() === 'v' || (domEvent.shiftKey && domEvent.key === 'V'))) {
         domEvent.preventDefault()
         domEvent.stopPropagation()
         readText()
-          .then((text) => this.writeToActiveSession(text))
+          .then((text) => this.writeTextToSession(sessionId, text))
           .catch((err) => {
             console.error('Paste failed:', err)
           })
       }
     })
 
-    this.terminal = terminal
-    this.fitAddon = fitAddon
-  }
-
-  private bindActiveSession(sessionId: string): void {
-    if (!this.terminal) {
-      return
-    }
-
-    this.teardownSessionBinding(false)
-    this.lastBoundSessionId = sessionId
-    this.listenerState = { cancelled: false, sessionId }
-    this.terminal.reset()
-    this.lastTerminalDims = { cols: 0, rows: 0 }
-    this.layoutReady = false
-    this.receivedOutputForSession = false
-    this.scheduleResize()
-    window.setTimeout(() => {
-      if (this.activeSessionId === sessionId) {
-        this.scheduleResize()
-      }
-    }, 180)
-
-    this.setupOutputListener(sessionId)
-
-    this.disposable = this.terminal.onData((data: string) => {
+    state.dataDisposable = terminal.onData((data: string) => {
       if (this.isCopying || this.activeSessionId !== sessionId) {
         return
       }
-
-      const session = this.sessions.find((item) => item.id === sessionId)
-      if (session?.status === 'connected') {
-        invoke('write_to_session', {
-          sessionId,
-          sessionType: session.type,
-          data,
-        }).catch(console.error)
-      }
+      this.writeToSession(sessionId, data)
     })
 
-    this.parsedDisposable = this.terminal.onWriteParsed(() => {
+    state.parsedDisposable = terminal.onWriteParsed(() => {
       if (this.activeSessionId !== sessionId) {
         return
       }
-      this.syncViewportToBottom()
+      this.syncViewportToBottom(state)
     })
+
+    this.states.set(sessionId, state)
+    this.setupOutputListener(state)
+    return state
   }
 
-  private teardownSessionBinding(resetLastBoundSession = true): void {
-    this.listenerState.cancelled = true
-
-    if (this.scrollTimeout) {
-      clearTimeout(this.scrollTimeout)
-      this.scrollTimeout = null
-    }
-    if (this.outputIdleSync) {
-      clearTimeout(this.outputIdleSync)
-      this.outputIdleSync = null
-    }
-    if (this.disposable) {
-      this.disposable.dispose()
-      this.disposable = null
-    }
-    if (this.parsedDisposable) {
-      this.parsedDisposable.dispose()
-      this.parsedDisposable = null
-    }
-    if (this.unlisten) {
-      this.unlisten()
-      this.unlisten = null
-    }
-    if (resetLastBoundSession) {
-      this.lastBoundSessionId = null
-    }
-  }
-
-  private async setupOutputListener(sessionId: string): Promise<void> {
+  private async setupOutputListener(state: TerminalState): Promise<void> {
     try {
-      const unlisten = await listen(`terminal-data-${sessionId}`, (event: Event<unknown>) => {
-        if (!this.terminal || this.activeSessionId !== sessionId) {
-          return
-        }
-
+      const unlisten = await listen(`terminal-data-${state.sessionId}`, (event: Event<unknown>) => {
         let textToWrite = ''
-        if (event.payload instanceof Array) {
-          const data = new Uint8Array(event.payload as number[])
+        if (Array.isArray(event.payload)) {
+          const data = new Uint8Array(event.payload)
           textToWrite = new TextDecoder().decode(data)
+        } else if (event.payload instanceof Uint8Array) {
+          textToWrite = new TextDecoder().decode(event.payload)
+        } else if (event.payload instanceof ArrayBuffer) {
+          textToWrite = new TextDecoder().decode(new Uint8Array(event.payload))
         } else if (typeof event.payload === 'string') {
           textToWrite = event.payload
         } else {
           return
         }
 
-        if (!this.receivedOutputForSession) {
-          this.receivedOutputForSession = true
-          this.ensureLayoutReady()
+        if (!state.receivedOutput) {
+          state.receivedOutput = true
+          this.ensureLayoutReady(state)
         }
 
-        this.terminal.write(textToWrite)
-        this.scheduleOutputIdleSync()
+        if (!state.opened) {
+          state.pendingOutput += textToWrite
+          if (state.pendingOutput.length > 250000) {
+            state.pendingOutput = state.pendingOutput.slice(state.pendingOutput.length - 250000)
+          }
+          return
+        }
+
+        try {
+          state.terminal.write(textToWrite)
+        } catch (writeError) {
+          console.error('Terminal write failed:', writeError)
+          return
+        }
+        this.scheduleOutputIdleSync(state)
       })
 
-      if (this.listenerState.cancelled || this.listenerState.sessionId !== sessionId) {
+      const current = this.states.get(state.sessionId)
+      if (current !== state) {
         unlisten()
         return
       }
-
-      this.unlisten = unlisten
+      state.unlisten = unlisten
     } catch (err) {
       console.error('Failed to setup listener:', err)
     }
   }
 
-  private resizeNow(): void {
-    if (!this.container || !this.terminal || !this.fitAddon) {
+  private disposeState(state: TerminalState): void {
+    if (state.unlisten) {
+      state.unlisten()
+      state.unlisten = null
+    }
+    if (state.dataDisposable) {
+      state.dataDisposable.dispose()
+      state.dataDisposable = null
+    }
+    if (state.parsedDisposable) {
+      state.parsedDisposable.dispose()
+      state.parsedDisposable = null
+    }
+
+    this.removePasteHandlers(state)
+
+    if (state.resizeFrame) {
+      cancelAnimationFrame(state.resizeFrame)
+      state.resizeFrame = null
+    }
+    if (state.resizeRetry) {
+      clearTimeout(state.resizeRetry)
+      state.resizeRetry = null
+    }
+    if (state.renderSyncFrame) {
+      cancelAnimationFrame(state.renderSyncFrame)
+      state.renderSyncFrame = null
+    }
+    if (state.renderSyncRetry) {
+      clearTimeout(state.renderSyncRetry)
+      state.renderSyncRetry = null
+    }
+    if (state.outputIdleSync) {
+      clearTimeout(state.outputIdleSync)
+      state.outputIdleSync = null
+    }
+
+    state.terminal.dispose()
+    state.container = null
+    state.opened = false
+  }
+
+  private pruneStates(): void {
+    const validSessionIds = new Set(this.sessions.map((session) => session.id))
+
+    for (const [sessionId, state] of this.states.entries()) {
+      if (!validSessionIds.has(sessionId)) {
+        this.disposeState(state)
+        this.states.delete(sessionId)
+      }
+    }
+  }
+
+  private resizeNow(state: TerminalState): void {
+    if (!state.container || !state.opened) {
       return
     }
-    if (!isVisible(this.container)) {
+    if (!isVisible(state.container)) {
       return
     }
 
-    const { width, height } = this.container.getBoundingClientRect()
+    const { width, height } = state.container.getBoundingClientRect()
     if (width <= 0 || height <= 0) {
       return
     }
 
-    const previous = { cols: this.terminal.cols, rows: this.terminal.rows }
-    this.fitAddon.fit()
+    const previous = { cols: state.terminal.cols, rows: state.terminal.rows }
+    state.fitAddon.fit()
 
-    const next = { cols: this.terminal.cols, rows: this.terminal.rows }
-    const changed = next.cols !== this.lastTerminalDims.cols || next.rows !== this.lastTerminalDims.rows
+    const next = { cols: state.terminal.cols, rows: state.terminal.rows }
+    const changed = next.cols !== state.lastTerminalDims.cols || next.rows !== state.lastTerminalDims.rows
 
-    this.lastTerminalDims = next
+    state.lastTerminalDims = next
+    state.layoutReady = next.cols > 0 && next.rows > 0
     if (next.cols > 0 && next.rows > 0) {
       this.preferredPtyDims = next
     }
-    this.layoutReady = next.cols > 0 && next.rows > 0
-    if (!changed || !this.activeSessionId) {
+
+    if (!changed) {
       return
     }
 
-    const session = this.sessions.find((item) => item.id === this.activeSessionId)
+    const session = this.sessions.find((item) => item.id === state.sessionId)
     if (session?.status === 'connected') {
       invoke('resize_session', {
-        sessionId: this.activeSessionId,
+        sessionId: state.sessionId,
         sessionType: session.type,
         cols: next.cols,
         rows: next.rows,
       }).catch(console.error)
     }
 
-    if (previous.cols !== next.cols || previous.rows !== next.rows) {
-      this.syncViewportToBottom()
+    if (this.activeSessionId === state.sessionId && (previous.cols !== next.cols || previous.rows !== next.rows)) {
+      this.syncViewportToBottom(state)
     }
   }
 
-  private syncViewportToBottom(): void {
-    if (!this.terminal) {
+  private ensureLayoutReady(state: TerminalState): void {
+    if (!state.container || !state.opened) {
+      return
+    }
+    if (state.layoutReady) {
+      return
+    }
+    if (!isVisible(state.container)) {
       return
     }
 
-    if (this.renderSyncFrame) {
-      cancelAnimationFrame(this.renderSyncFrame)
-    }
-    if (this.renderSyncRetry) {
-      clearTimeout(this.renderSyncRetry)
-    }
-
-    this.renderSyncFrame = window.requestAnimationFrame(() => {
-      if (!this.terminal) {
-        return
-      }
-
-      const buffer = this.terminal.buffer.active
-      if (buffer.viewportY !== buffer.baseY) {
-        this.terminal.scrollToBottom()
-      }
-      this.terminal.refresh(0, Math.max(this.terminal.rows - 1, 0))
-
-      this.renderSyncRetry = window.setTimeout(() => {
-        if (!this.terminal) {
-          return
-        }
-        const retryBuffer = this.terminal.buffer.active
-        if (retryBuffer.viewportY !== retryBuffer.baseY) {
-          this.terminal.scrollToBottom()
-        }
-        this.terminal.refresh(0, Math.max(this.terminal.rows - 1, 0))
-      }, 40)
-    })
-  }
-
-  private ensureLayoutReady(): void {
-    if (!this.terminal || !this.fitAddon || !this.container) {
-      return
-    }
-    if (this.layoutReady) {
-      return
-    }
-    if (!isVisible(this.container)) {
-      return
-    }
-
-    const { width, height } = this.container.getBoundingClientRect()
+    const { width, height } = state.container.getBoundingClientRect()
     if (width <= 0 || height <= 0) {
       return
     }
 
-    this.fitAddon.fit()
-    this.lastTerminalDims = { cols: this.terminal.cols, rows: this.terminal.rows }
-    if (this.terminal.cols > 0 && this.terminal.rows > 0) {
-      this.preferredPtyDims = { cols: this.terminal.cols, rows: this.terminal.rows }
+    state.fitAddon.fit()
+    state.lastTerminalDims = { cols: state.terminal.cols, rows: state.terminal.rows }
+    state.layoutReady = state.terminal.cols > 0 && state.terminal.rows > 0
+    if (state.layoutReady) {
+      this.preferredPtyDims = { cols: state.terminal.cols, rows: state.terminal.rows }
     }
-    this.layoutReady = this.terminal.cols > 0 && this.terminal.rows > 0
   }
 
-  private scheduleOutputIdleSync(): void {
-    if (this.outputIdleSync) {
-      clearTimeout(this.outputIdleSync)
+  private syncViewportToBottom(state: TerminalState): void {
+    if (!state.opened) {
+      return
     }
 
-    this.outputIdleSync = window.setTimeout(() => {
-      this.ensureLayoutReady()
-      this.syncViewportToBottom()
+    if (state.renderSyncFrame) {
+      cancelAnimationFrame(state.renderSyncFrame)
+    }
+    if (state.renderSyncRetry) {
+      clearTimeout(state.renderSyncRetry)
+    }
+
+    state.renderSyncFrame = window.requestAnimationFrame(() => {
+      const buffer = state.terminal.buffer.active
+      if (buffer.viewportY !== buffer.baseY) {
+        state.terminal.scrollToBottom()
+      }
+      state.terminal.refresh(0, Math.max(state.terminal.rows - 1, 0))
+
+      state.renderSyncRetry = window.setTimeout(() => {
+        const retryBuffer = state.terminal.buffer.active
+        if (retryBuffer.viewportY !== retryBuffer.baseY) {
+          state.terminal.scrollToBottom()
+        }
+        state.terminal.refresh(0, Math.max(state.terminal.rows - 1, 0))
+      }, 40)
+    })
+  }
+
+  private scheduleOutputIdleSync(state: TerminalState): void {
+    if (state.outputIdleSync) {
+      clearTimeout(state.outputIdleSync)
+    }
+
+    state.outputIdleSync = window.setTimeout(() => {
+      this.ensureLayoutReady(state)
+      if (this.activeSessionId === state.sessionId) {
+        this.syncViewportToBottom(state)
+      }
     }, 120)
   }
 
-  private bindPasteHandlers(): void {
-    if (!this.container) {
+  private bindPasteHandlers(state: TerminalState): void {
+    if (!state.container) {
       return
     }
 
@@ -452,52 +460,67 @@ export class TerminalController {
 
       const clipboardText = event.clipboardData?.getData('text')
       if (clipboardText) {
-        this.writeToActiveSession(clipboardText)
+        this.writeTextToSession(state.sessionId, clipboardText)
         return
       }
 
       readText()
-        .then((text) => this.writeToActiveSession(text))
+        .then((text) => this.writeTextToSession(state.sessionId, text))
         .catch((err) => {
           console.error('Paste failed:', err)
         })
     }
 
-    this.container.addEventListener('paste', handlePaste as EventListener)
-    this.pasteTarget = this.container.querySelector('textarea.xterm-helper-textarea')
-    this.pasteTarget?.addEventListener('paste', handlePaste as EventListener)
-    this.handlePaste = handlePaste
+    state.container.addEventListener('paste', handlePaste as EventListener)
+    state.pasteTarget = state.container.querySelector('textarea.xterm-helper-textarea')
+    state.pasteTarget?.addEventListener('paste', handlePaste as EventListener)
+    state.handlePaste = handlePaste
   }
 
-  private removePasteHandlers(): void {
-    if (!this.handlePaste || !this.container) {
+  private removePasteHandlers(state: TerminalState): void {
+    if (!state.handlePaste || !state.container) {
       return
     }
 
-    this.container.removeEventListener('paste', this.handlePaste as EventListener)
-    this.pasteTarget?.removeEventListener('paste', this.handlePaste as EventListener)
-    this.handlePaste = null
-    this.pasteTarget = null
+    state.container.removeEventListener('paste', state.handlePaste as EventListener)
+    state.pasteTarget?.removeEventListener('paste', state.handlePaste as EventListener)
+    state.handlePaste = null
+    state.pasteTarget = null
   }
 
-  private writeToActiveSession(text: string): void {
-    if (!text || !this.activeSessionId) {
+  private writeToSession(sessionId: string, data: string): void {
+    if (!data) {
       return
     }
 
-    const session = this.sessions.find((item) => item.id === this.activeSessionId)
+    const session = this.sessions.find((item) => item.id === sessionId)
+    if (session?.status !== 'connected') {
+      return
+    }
+
+    invoke('write_to_session', {
+      sessionId,
+      sessionType: session.type,
+      data,
+    }).catch(console.error)
+  }
+
+  private writeTextToSession(sessionId: string, text: string): void {
+    if (!text) {
+      return
+    }
+
+    const session = this.sessions.find((item) => item.id === sessionId)
     if (session?.status !== 'connected') {
       return
     }
 
     let processedText = text
-    // Normalize pasted line endings to a single carriage return so shell
-    // receives one "Enter" per line instead of CRLF double line breaks.
     processedText = processedText.replace(/\r\n/g, '\r')
     processedText = processedText.replace(/\n/g, '\r')
 
     invoke('write_to_session', {
-      sessionId: this.activeSessionId,
+      sessionId,
       sessionType: session.type,
       data: processedText,
     }).catch(console.error)

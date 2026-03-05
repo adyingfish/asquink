@@ -8,13 +8,14 @@ use russh::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tauri::Emitter;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::session::{SessionStatus, TerminalSession};
 
 pub struct SshSession {
     handle: Arc<Mutex<client::Handle<ClientHandler>>>,
     channel_id: ChannelId,
+    resize_tx: mpsc::UnboundedSender<(u16, u16)>,
     status: Arc<RwLock<SessionStatus>>,
 }
 
@@ -161,6 +162,7 @@ impl SshSession {
             .await?;
 
         channel.request_shell(true).await?;
+        let (resize_tx, mut resize_rx) = mpsc::unbounded_channel::<(u16, u16)>();
 
         let handle_arc = Arc::new(Mutex::new(handle));
         let status = Arc::new(RwLock::new(SessionStatus::Connected));
@@ -168,21 +170,42 @@ impl SshSession {
         let id_clone = id.clone();
 
         tokio::spawn(async move {
+            let mut resize_rx_closed = false;
             loop {
-                match channel.wait().await {
-                    Some(ChannelMsg::Data { ref data, .. }) => {
-                        let data_vec = data.to_vec();
-                        let _ = app_handle.emit(&format!("terminal-data-{}", id_clone), data_vec);
+                tokio::select! {
+                    maybe_resize = resize_rx.recv(), if !resize_rx_closed => {
+                        match maybe_resize {
+                            Some((cols, rows)) => {
+                                if channel
+                                    .window_change(u32::from(cols), u32::from(rows), 0, 0)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            None => {
+                                resize_rx_closed = true;
+                            }
+                        }
                     }
-                    Some(ChannelMsg::ExitStatus { .. }) => {
-                        let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
-                        break;
+                    msg = channel.wait() => {
+                        match msg {
+                            Some(ChannelMsg::Data { ref data, .. }) => {
+                                let data_vec = data.to_vec();
+                                let _ = app_handle.emit(&format!("terminal-data-{}", id_clone), data_vec);
+                            }
+                            Some(ChannelMsg::ExitStatus { .. }) => {
+                                let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
+                                break;
+                            }
+                            None => {
+                                let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
+                                break;
+                            }
+                            _ => {}
+                        }
                     }
-                    None => {
-                        let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
-                        break;
-                    }
-                    _ => {}
                 }
             }
             *status_clone.write().await = SessionStatus::Disconnected;
@@ -191,6 +214,7 @@ impl SshSession {
         Ok(Self {
             handle: handle_arc,
             channel_id,
+            resize_tx,
             status,
         })
     }
@@ -207,10 +231,10 @@ impl TerminalSession for SshSession {
         Ok(())
     }
 
-    async fn resize(&self, _cols: u16, _rows: u16) -> Result<()> {
-        // window_change is only available on Channel, not Handle.
-        // Since the channel is consumed by the reader task, resize is not supported
-        // for SSH sessions in the current architecture.
+    async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
+        self.resize_tx
+            .send((cols, rows))
+            .map_err(|_| anyhow::anyhow!("Failed to send SSH window resize"))?;
         Ok(())
     }
 
