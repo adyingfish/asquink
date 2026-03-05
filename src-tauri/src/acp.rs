@@ -16,6 +16,7 @@ use crate::database::{CreateMessageRecord, Database, MessageRecord};
 
 const ACP_PROTOCOL_VERSION: u32 = 1;
 const REQUEST_TIMEOUT_SECONDS: u64 = 45;
+const PERMISSION_REQUEST_TIMEOUT_SECONDS: u64 = 300;
 
 #[derive(Clone)]
 pub struct AcpManager {
@@ -148,6 +149,32 @@ pub struct AcpSessionErrorPayload {
     pub fatal: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpPermissionOptionPayload {
+    pub option_id: String,
+    pub name: Option<String>,
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcpPermissionRequestPayload {
+    pub session_id: String,
+    pub request_id: String,
+    pub tool_call_id: Option<String>,
+    pub title: Option<String>,
+    pub kind: Option<String>,
+    pub suggested_option_id: Option<String>,
+    pub options: Vec<AcpPermissionOptionPayload>,
+}
+
+#[derive(Debug)]
+pub enum AcpPermissionDecision {
+    Selected { option_id: String },
+    Cancelled,
+}
+
 struct AcpSession {
     session_id: String,
     runtime_agent_id: String,
@@ -159,6 +186,7 @@ struct AcpSession {
     child: Mutex<Child>,
     stdin: Mutex<ChildStdin>,
     pending: Mutex<HashMap<u64, oneshot::Sender<Value>>>,
+    pending_permission_requests: Mutex<HashMap<String, oneshot::Sender<AcpPermissionDecision>>>,
     next_request_id: AtomicU64,
     protocol_version: Mutex<Option<String>>,
     runtime_version: Mutex<Option<String>>,
@@ -285,6 +313,7 @@ impl AcpManager {
             child: Mutex::new(child),
             stdin: Mutex::new(stdin),
             pending: Mutex::new(HashMap::new()),
+            pending_permission_requests: Mutex::new(HashMap::new()),
             next_request_id: AtomicU64::new(1),
             protocol_version: Mutex::new(None),
             runtime_version: Mutex::new(None),
@@ -572,6 +601,16 @@ impl AcpManager {
             .cloned()
             .ok_or("ACP session not found".to_string())
     }
+
+    pub async fn respond_permission_request(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        decision: AcpPermissionDecision,
+    ) -> Result<(), String> {
+        let session = self.get_session(session_id).await?;
+        session.respond_permission_request(request_id, decision).await
+    }
 }
 
 impl AcpSession {
@@ -740,7 +779,7 @@ impl AcpSession {
 
         if payload.get("method").is_some() {
             if payload.get("id").is_some() {
-                self.reply_method_not_found(&payload).await?;
+                self.handle_request(&payload).await?;
             } else {
                 self.handle_notification(&payload).await?;
             }
@@ -754,6 +793,18 @@ impl AcpSession {
         }
 
         Ok(())
+    }
+
+    async fn handle_request(&self, payload: &Value) -> Result<(), String> {
+        let method = payload
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        match method {
+            "session/request_permission" => self.handle_permission_request(payload).await,
+            _ => self.reply_method_not_found(payload).await,
+        }
     }
 
     async fn reply_method_not_found(&self, payload: &Value) -> Result<(), String> {
@@ -772,6 +823,100 @@ impl AcpSession {
             }
         }))
         .await
+    }
+
+    async fn handle_permission_request(&self, payload: &Value) -> Result<(), String> {
+        let id = payload.get("id").cloned().unwrap_or(Value::Null);
+        let params = payload.get("params").unwrap_or(&Value::Null);
+        let options = params
+            .get("options")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let suggested_option_id = select_permission_option(&options);
+        let request_id = Uuid::new_v4().to_string();
+        let (sender, receiver) = oneshot::channel();
+        self.pending_permission_requests
+            .lock()
+            .await
+            .insert(request_id.clone(), sender);
+
+        let option_payloads = options
+            .iter()
+            .filter_map(|option| {
+                let option_id = option.get("optionId").and_then(Value::as_str)?.to_string();
+                Some(AcpPermissionOptionPayload {
+                    option_id,
+                    name: option
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(|value| value.to_string()),
+                    kind: option
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .map(|value| value.to_string()),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let _ = self.app_handle.emit(
+            &format!("acp-permission-request-{}", self.session_id),
+            AcpPermissionRequestPayload {
+                session_id: self.session_id.clone(),
+                request_id: request_id.clone(),
+                tool_call_id: string_at(params, &["toolCall.toolCallId", "toolCallId"]),
+                title: string_at(params, &["toolCall.title", "title"]),
+                kind: string_at(params, &["toolCall.kind", "kind"]),
+                suggested_option_id: suggested_option_id.clone(),
+                options: option_payloads,
+            },
+        );
+
+        let decision = match timeout(Duration::from_secs(PERMISSION_REQUEST_TIMEOUT_SECONDS), receiver).await {
+            Ok(Ok(decision)) => decision,
+            Ok(Err(_)) => AcpPermissionDecision::Cancelled,
+            Err(_) => AcpPermissionDecision::Cancelled,
+        };
+        self.pending_permission_requests
+            .lock()
+            .await
+            .remove(&request_id);
+
+        let outcome = match decision {
+            AcpPermissionDecision::Selected { option_id } => json!({
+                "outcome": "selected",
+                "optionId": option_id,
+            }),
+            AcpPermissionDecision::Cancelled => json!({
+                "outcome": "cancelled",
+            }),
+        };
+
+        self.write_json(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": {
+                "outcome": outcome,
+            }
+        }))
+        .await
+    }
+
+    async fn respond_permission_request(
+        &self,
+        request_id: &str,
+        decision: AcpPermissionDecision,
+    ) -> Result<(), String> {
+        let sender = self
+            .pending_permission_requests
+            .lock()
+            .await
+            .remove(request_id)
+            .ok_or("Permission request not found or already resolved".to_string())?;
+
+        sender
+            .send(decision)
+            .map_err(|_| "Permission request channel closed".to_string())
     }
 
     async fn handle_notification(&self, payload: &Value) -> Result<(), String> {
@@ -1072,6 +1217,42 @@ fn bool_at(value: &Value, paths: &[&str]) -> Option<bool> {
     }
 
     None
+}
+
+fn select_permission_option(options: &[Value]) -> Option<String> {
+    for preferred_kind in ["allow_once", "allow_always"] {
+        if let Some(option_id) = options
+            .iter()
+            .find(|option| option.get("kind").and_then(Value::as_str) == Some(preferred_kind))
+            .and_then(|option| option.get("optionId").and_then(Value::as_str))
+        {
+            return Some(option_id.to_string());
+        }
+    }
+
+    if let Some(option_id) = options.iter().find_map(|option| {
+        let option_id = option.get("optionId").and_then(Value::as_str)?;
+        let label = option
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if label.contains("allow")
+            || label.contains("approve")
+            || label.contains("accept")
+            || label.contains("yes")
+        {
+            return Some(option_id.to_string());
+        }
+        None
+    }) {
+        return Some(option_id);
+    }
+
+    options
+        .iter()
+        .find_map(|option| option.get("optionId").and_then(Value::as_str))
+        .map(|value| value.to_string())
 }
 
 fn nested_value<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {

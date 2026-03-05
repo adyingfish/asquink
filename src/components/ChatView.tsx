@@ -68,6 +68,22 @@ interface AcpErrorPayload {
   fatal: boolean
 }
 
+interface AcpPermissionOptionPayload {
+  optionId: string
+  name?: string | null
+  kind?: string | null
+}
+
+interface AcpPermissionRequestPayload {
+  sessionId: string
+  requestId: string
+  toolCallId?: string | null
+  title?: string | null
+  kind?: string | null
+  suggestedOptionId?: string | null
+  options: AcpPermissionOptionPayload[]
+}
+
 const parseTimestamp = (value?: string | null) => {
   if (!value) return null
   const normalized = value.includes('T') ? value : `${value.replace(' ', 'T')}Z`
@@ -163,6 +179,8 @@ export default function ChatView({ session }: ChatViewProps) {
   const [runtimeLabel, setRuntimeLabel] = useState(getAcpRuntimeDefinition(session?.acpAgentId)?.name || 'ACP')
   const [runtimeMeta, setRuntimeMeta] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [permissionQueue, setPermissionQueue] = useState<AcpPermissionRequestPayload[]>([])
+  const [resolvingPermission, setResolvingPermission] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const isAcp = session?.agentId === 'acp'
@@ -177,6 +195,10 @@ export default function ChatView({ session }: ChatViewProps) {
   }, [messages, status, error])
 
   useEffect(() => {
+    setPermissionQueue([])
+  }, [isAcp, session?.id])
+
+  useEffect(() => {
     let cancelled = false
     let unlisteners: UnlistenFn[] = []
 
@@ -184,6 +206,7 @@ export default function ChatView({ session }: ChatViewProps) {
       if (!session?.id || !isAcp) {
         setMessages([])
         setError(null)
+        setPermissionQueue([])
         setStatus(session?.status === 'connected' ? 'ready' : 'closed')
         return
       }
@@ -245,6 +268,9 @@ export default function ChatView({ session }: ChatViewProps) {
         listen(`acp-session-closed-${session.id}`, () => {
           setStatus('closed')
         }),
+        listen<AcpPermissionRequestPayload>(`acp-permission-request-${session.id}`, (event) => {
+          setPermissionQueue((current) => [...current, event.payload])
+        }),
       ])
     }
 
@@ -256,6 +282,63 @@ export default function ChatView({ session }: ChatViewProps) {
       unlisteners.forEach((unlisten) => unlisten())
     }
   }, [isAcp, session?.id, session?.status])
+
+  const currentPermission = permissionQueue[0] || null
+
+  const getOptionIdByKind = (request: AcpPermissionRequestPayload, kind: 'allow_once' | 'allow_always') => {
+    const exact = request.options.find((option) => option.kind === kind)?.optionId
+    if (exact) return exact
+
+    const hinted = request.options.find((option) => {
+      const label = (option.name || '').toLowerCase()
+      if (kind === 'allow_always') {
+        return label.includes('always')
+      }
+      return label.includes('once')
+    })?.optionId
+    if (hinted) return hinted
+
+    if (kind === 'allow_once' && request.suggestedOptionId) {
+      return request.suggestedOptionId
+    }
+
+    if (kind === 'allow_always') {
+      return request.options.find((option) => option.kind === 'allow_once')?.optionId || null
+    }
+
+    return request.options[0]?.optionId || null
+  }
+
+  const resolvePermission = async (decision: 'allow_once' | 'allow_always' | 'reject') => {
+    if (!session?.id || !currentPermission || resolvingPermission) return
+
+    try {
+      setResolvingPermission(true)
+      const outcome = decision === 'reject' ? 'cancelled' : 'selected'
+      const optionId = decision === 'allow_once'
+        ? getOptionIdByKind(currentPermission, 'allow_once')
+        : decision === 'allow_always'
+          ? getOptionIdByKind(currentPermission, 'allow_always')
+          : null
+
+      if (outcome === 'selected' && !optionId) {
+        throw new Error('No available permission option for approval.')
+      }
+
+      await invoke('respond_acp_permission_request', {
+        sessionId: session.id,
+        requestId: currentPermission.requestId,
+        outcome,
+        optionId,
+      })
+
+      setPermissionQueue((current) => current.slice(1))
+    } catch (resolveError) {
+      setError(String(resolveError))
+    } finally {
+      setResolvingPermission(false)
+    }
+  }
 
   const handleSend = async () => {
     if (!session?.id || !isAcp || !draft.trim() || sending) return
@@ -324,7 +407,7 @@ export default function ChatView({ session }: ChatViewProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div className="flex-1 flex flex-col min-w-0 overflow-hidden relative">
       <div className="px-3 py-1.5 border-b shrink-0 flex items-center gap-1.5" style={{ background: C.bg2, borderColor: C.bds }}>
         <MessageSquareText size={12} style={{ color: C.t2 }} />
         <span className="text-[11px] font-semibold" style={{ color: C.t2 }}>
@@ -399,6 +482,59 @@ export default function ChatView({ session }: ChatViewProps) {
           </button>
         </div>
       </div>
+
+      {currentPermission && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center px-4" style={{ background: 'rgba(8, 9, 13, 0.75)' }}>
+          <div className="w-full max-w-lg rounded-xl border p-4" style={{ background: C.bg2, borderColor: C.bd }}>
+            <div className="text-[12px] font-semibold mb-2" style={{ color: C.t1 }}>
+              Permission Request
+            </div>
+            <div className="text-[11px] leading-relaxed mb-3" style={{ color: C.t2 }}>
+              {currentPermission.title || 'ACP agent is requesting permission to continue.'}
+            </div>
+            {(currentPermission.kind || currentPermission.toolCallId) && (
+              <div className="text-[10px] mb-3 font-mono" style={{ color: C.t3 }}>
+                {[currentPermission.kind, currentPermission.toolCallId].filter(Boolean).join(' / ')}
+              </div>
+            )}
+            {currentPermission.options.length > 0 && (
+              <div className="mb-4 space-y-1">
+                {currentPermission.options.map((option) => (
+                  <div key={option.optionId} className="text-[10px]" style={{ color: C.t2 }}>
+                    {option.name || option.kind || option.optionId}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                onClick={() => void resolvePermission('reject')}
+                disabled={resolvingPermission}
+                className="px-3 h-8 rounded-md border text-[11px] font-semibold disabled:opacity-60"
+                style={{ borderColor: `${C.red}40`, color: C.red, background: `${C.red}12` }}
+              >
+                拒绝
+              </button>
+              <button
+                onClick={() => void resolvePermission('allow_once')}
+                disabled={resolvingPermission || !getOptionIdByKind(currentPermission, 'allow_once')}
+                className="px-3 h-8 rounded-md border text-[11px] font-semibold disabled:opacity-60"
+                style={{ borderColor: `${C.blu}40`, color: C.blu, background: `${C.blu}12` }}
+              >
+                本次批准
+              </button>
+              <button
+                onClick={() => void resolvePermission('allow_always')}
+                disabled={resolvingPermission || !getOptionIdByKind(currentPermission, 'allow_always')}
+                className="px-3 h-8 rounded-md border text-[11px] font-semibold disabled:opacity-60"
+                style={{ borderColor: `${C.grn}40`, color: C.grn, background: `${C.grn}12` }}
+              >
+                {resolvingPermission ? '提交中...' : '始终批准'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

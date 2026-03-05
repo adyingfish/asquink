@@ -16,7 +16,7 @@ mod session;
 mod ssh;
 mod wsl;
 
-use acp::{AcpCreateSessionResult, AcpManager, AcpPromptResult};
+use acp::{AcpCreateSessionResult, AcpManager, AcpPermissionDecision, AcpPromptResult};
 use database::Database;
 use pty::PtyManager;
 use ssh::{SshAuth, SshSession};
@@ -1002,6 +1002,34 @@ async fn send_acp_message(
 }
 
 #[tauri::command]
+async fn respond_acp_permission_request(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    session_id: String,
+    request_id: String,
+    outcome: String,
+    option_id: Option<String>,
+) -> Result<(), String> {
+    let acp_manager = {
+        let state = state.lock().await;
+        state.acp_manager.clone()
+    };
+
+    let decision = match outcome.as_str() {
+        "selected" => {
+            let option_id =
+                option_id.ok_or("optionId is required when outcome is selected".to_string())?;
+            AcpPermissionDecision::Selected { option_id }
+        }
+        "cancelled" => AcpPermissionDecision::Cancelled,
+        _ => return Err(format!("Unsupported permission outcome: {outcome}")),
+    };
+
+    acp_manager
+        .respond_permission_request(&session_id, &request_id, decision)
+        .await
+}
+
+#[tauri::command]
 async fn close_acp_session(
     state: State<'_, Arc<Mutex<AppState>>>,
     session_id: String,
@@ -1445,6 +1473,7 @@ fn main() {
             set_acp_wsl_env_id,
             create_acp_session,
             send_acp_message,
+            respond_acp_permission_request,
             close_acp_session,
             scan_agents_for_env,
             launch_agent,
