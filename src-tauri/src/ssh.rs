@@ -264,3 +264,99 @@ pub enum SshAuth {
         passphrase: Option<String>,
     },
 }
+
+pub async fn exec_command(
+    host: &str,
+    port: u16,
+    username: &str,
+    auth: SshAuth,
+    command: &str,
+) -> Result<String> {
+    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+    let handler = ClientHandler;
+    let config = client::Config {
+        inactivity_timeout: Some(std::time::Duration::from_secs(300)),
+        ..Default::default()
+    };
+    let config = Arc::new(config);
+    let mut handle = client::connect(config, addr, handler).await?;
+
+    match auth {
+        SshAuth::Password(password) => {
+            let auth_res = handle.authenticate_password(username, password).await?;
+            if !auth_res.success() {
+                bail!("Password authentication failed");
+            }
+        }
+        SshAuth::PrivateKey { path, passphrase } => {
+            let key_path = std::path::Path::new(&path);
+            if !key_path.exists() {
+                bail!("Private key file not found: {}", path);
+            }
+
+            let key_data = std::fs::read(&path)
+                .map_err(|e| anyhow::anyhow!("Failed to read private key file: {}", e))?;
+            let key_str = std::str::from_utf8(&key_data)
+                .map_err(|e| anyhow::anyhow!("Private key is not valid UTF-8 PEM text: {}", e))?;
+            let key_pair = keys::decode_secret_key(key_str, passphrase.as_deref())
+                .map_err(|e| anyhow::anyhow!("Failed to parse private key: {}", e))?;
+            let key_pair = Arc::new(key_pair);
+
+            let mut authed = false;
+
+            {
+                let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha512));
+                let auth_res = handle
+                    .authenticate_publickey(username, key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("SSH authentication error (rsa-sha2-512): {}", e))?;
+                authed = auth_res.success();
+            }
+
+            if !authed {
+                let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha256));
+                let auth_res = handle
+                    .authenticate_publickey(username, key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("SSH authentication error (rsa-sha2-256): {}", e))?;
+                authed = auth_res.success();
+            }
+
+            if !authed {
+                let key = PrivateKeyWithHashAlg::new(key_pair.clone(), None);
+                let auth_res = handle
+                    .authenticate_publickey(username, key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("SSH authentication error (legacy ssh-rsa): {}", e))?;
+                authed = auth_res.success();
+            }
+
+            if !authed {
+                bail!(
+                    "Key authentication failed - server rejected the key after trying rsa-sha2-512, rsa-sha2-256 and ssh-rsa."
+                );
+            }
+        }
+    }
+
+    let mut channel = handle.channel_open_session().await?;
+    channel.exec(true, command).await?;
+
+    let mut stdout: Vec<u8> = Vec::new();
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Data { data }) => {
+                stdout.extend_from_slice(data.as_ref());
+            }
+            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+            _ => {}
+        }
+    }
+
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "", "")
+        .await
+        .map_err(|e| anyhow::anyhow!("Disconnect failed: {:?}", e));
+
+    Ok(String::from_utf8_lossy(&stdout).to_string())
+}

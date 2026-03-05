@@ -83,6 +83,7 @@ function App() {
   const [showEnvManage, setShowEnvManage] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const terminalControllerRef = useRef<TerminalController | null>(null)
+  const startupCacheRefreshedRef = useRef(false)
 
   if (!terminalControllerRef.current) {
     terminalControllerRef.current = new TerminalController()
@@ -91,6 +92,7 @@ function App() {
   // Load historical sessions on app start
   useEffect(() => {
     loadHistoricalSessions()
+    refreshAgentManagementCacheOnStartup()
   }, [])
 
   useEffect(() => {
@@ -182,6 +184,16 @@ function App() {
     if (activeSessionId === id) {
       const connectedSessions = sessions.filter(s => s.id !== id && s.status === 'connected')
       setActiveSessionId(connectedSessions.length > 0 ? connectedSessions[0].id : null)
+    }
+  }
+
+  const refreshAgentManagementCacheOnStartup = async () => {
+    if (startupCacheRefreshedRef.current) return
+    startupCacheRefreshedRef.current = true
+    try {
+      await invoke('refresh_agent_management_cache_on_startup')
+    } catch (error) {
+      console.error('Failed to refresh startup agent-management cache:', error)
     }
   }
 

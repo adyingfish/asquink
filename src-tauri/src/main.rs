@@ -444,6 +444,228 @@ pub fn get_agent_definitions() -> Vec<(&'static str, &'static str, &'static str)
     ]
 }
 
+fn acp_scope_key(install_target: &str, distro: Option<&str>) -> String {
+    if install_target == "wsl" {
+        format!("wsl:{}", distro.unwrap_or_default())
+    } else {
+        "local".to_string()
+    }
+}
+
+async fn detect_agents_for_env(db: &Database, env_id: &str) -> Result<Vec<AgentInfo>, String> {
+    let env = db.get_env(env_id).await.map_err(|e| e.to_string())?;
+
+    if env.env_type == "local" {
+        scan_agents().await
+    } else if env.env_type == "wsl" {
+        let distro = env.wsl_distro.ok_or("WSL distribution not configured")?;
+        let user = env.wsl_user.as_deref();
+        wsl::scan_agents_in_distro(&distro, user)
+            .await
+            .map_err(|e| e.to_string())
+    } else if env.env_type == "ssh" {
+        detect_agents_in_ssh_env(&env).await
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+fn ssh_agent_scan_script() -> &'static str {
+    r#"
+check_agent() {
+  id="$1"
+  name="$2"
+  cmd="$3"
+  installed=0
+  version=""
+  if command -v "$cmd" >/dev/null 2>&1; then
+    installed=1
+    version=$("$cmd" --version 2>/dev/null | head -n 1)
+    if [ -z "$version" ]; then version=$("$cmd" -v 2>/dev/null | head -n 1); fi
+    if [ -z "$version" ]; then version=$("$cmd" version 2>/dev/null | head -n 1); fi
+  fi
+  printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$name" "$cmd" "$installed" "$version"
+}
+check_agent "claude" "Claude Code" "claude"
+check_agent "codex" "Codex" "codex"
+check_agent "gemini" "Gemini CLI" "gemini"
+check_agent "opencode" "OpenCode" "opencode"
+check_agent "openclaw" "OpenClaw" "openclaw"
+"#
+}
+
+fn parse_ssh_agent_scan(stdout: &str) -> Vec<AgentInfo> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(5, '\t');
+            let id = parts.next()?.trim();
+            let name = parts.next()?.trim();
+            let executable = parts.next()?.trim();
+            let installed = parts.next()?.trim() == "1";
+            let version = parts
+                .next()
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string());
+
+            if id.is_empty() || name.is_empty() || executable.is_empty() {
+                return None;
+            }
+
+            Some(AgentInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                executable: executable.to_string(),
+                installed,
+                version,
+            })
+        })
+        .collect()
+}
+
+async fn detect_agents_in_ssh_env(env: &database::EnvConfig) -> Result<Vec<AgentInfo>, String> {
+    let host = env
+        .host
+        .as_deref()
+        .ok_or("SSH host not configured".to_string())?;
+    let port = env.port.unwrap_or(22);
+    let username = env
+        .username
+        .as_deref()
+        .ok_or("SSH username not configured".to_string())?;
+
+    let auth = if env.auth_type.as_deref() == Some("password") {
+        return Err("SSH environment uses password auth; background scan currently requires key auth.".to_string());
+    } else {
+        let key_path = env
+            .private_key_path
+            .clone()
+            .ok_or("SSH private key path not configured".to_string())?;
+        SshAuth::PrivateKey {
+            path: key_path,
+            passphrase: env.passphrase.clone(),
+        }
+    };
+
+    let stdout = ssh::exec_command(host, port, username, auth, ssh_agent_scan_script())
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut scanned = parse_ssh_agent_scan(&stdout);
+
+    if scanned.is_empty() {
+        scanned = get_agent_definitions()
+            .into_iter()
+            .map(|(id, name, executable)| AgentInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                executable: executable.to_string(),
+                installed: false,
+                version: None,
+            })
+            .collect();
+    }
+
+    Ok(scanned)
+}
+
+async fn detect_acp_agents_for_target(
+    acp_manager: AcpManager,
+    install_target: Option<String>,
+    distro: Option<String>,
+    user: Option<String>,
+) -> Result<Vec<AcpAgentInfo>, String> {
+    let runtime_summary = acp_manager.runtime_summary().await;
+    let launch_target = match install_target.as_deref() {
+        Some("wsl") => acp::AcpLaunchTarget::Wsl {
+            distro: distro.ok_or("WSL distro is required for WSL ACP scan".to_string())?,
+            user,
+        },
+        _ => acp::AcpLaunchTarget::Local,
+    };
+    let location_key = launch_target.location_key();
+    let location_label = launch_target.location_label();
+    let wsl_distro = match &launch_target {
+        acp::AcpLaunchTarget::Wsl { distro, .. } => Some(distro.clone()),
+        acp::AcpLaunchTarget::Local => None,
+    };
+    let mut result = Vec::new();
+
+    for definition in acp::acp_runtime_definitions() {
+        let runtime_state = runtime_summary.get(&format!("{location_key}::{}", definition.id));
+        let installed = match &launch_target {
+            acp::AcpLaunchTarget::Local => command_exists(definition.install_probe).await,
+            acp::AcpLaunchTarget::Wsl { distro, user } => {
+                command_exists_in_wsl(definition.install_probe, distro, user.as_deref()).await
+            }
+        };
+        let runtime_supported = runtime_state.is_some()
+            || match &launch_target {
+                acp::AcpLaunchTarget::Local => command_exists(definition.runtime_probe).await,
+                acp::AcpLaunchTarget::Wsl { distro, user } => {
+                    command_exists_in_wsl(definition.runtime_probe, distro, user.as_deref()).await
+                }
+            };
+        let version = if let Some(version) =
+            runtime_state.and_then(|state| state.runtime_version.clone())
+        {
+            Some(version)
+        } else if installed {
+            match &launch_target {
+                acp::AcpLaunchTarget::Local => detect_agent_version(definition.install_probe).await,
+                acp::AcpLaunchTarget::Wsl { distro, user } => {
+                    detect_agent_version_in_wsl(definition.install_probe, distro, user.as_deref())
+                        .await
+                }
+            }
+        } else {
+            None
+        };
+        let pid = runtime_state.and_then(|state| state.pid);
+        let status = if !installed {
+            "not_installed"
+        } else if !runtime_supported {
+            "runtime_missing"
+        } else if let Some(state) = runtime_state {
+            state.status.as_str()
+        } else {
+            "disconnected"
+        };
+        let executable = if runtime_supported {
+            definition.executable_display
+        } else {
+            definition.install_probe
+        };
+
+        result.push(AcpAgentInfo {
+            id: definition.id.to_string(),
+            name: definition.name.to_string(),
+            executable: executable.to_string(),
+            status: status.to_string(),
+            version,
+            pid,
+            protocol_version: runtime_state.and_then(|state| state.protocol_version.clone()),
+            last_error: runtime_state.and_then(|state| state.last_error.clone()),
+            runtime_supported,
+            install_hint: Some(
+                if !installed {
+                    definition.install_hint
+                } else {
+                    definition
+                        .runtime_install_hint
+                        .unwrap_or(definition.install_hint)
+                }
+                .to_string(),
+            ),
+            install_target: launch_target.install_target().to_string(),
+            location_label: location_label.clone(),
+            wsl_distro: wsl_distro.clone(),
+        });
+    }
+
+    Ok(result)
+}
+
 // Project structure
 #[derive(serde::Serialize)]
 pub struct Project {
@@ -836,95 +1058,172 @@ async fn list_acp_agents(
         let state = state.lock().await;
         state.acp_manager.clone()
     };
-    let runtime_summary = acp_manager.runtime_summary().await;
-    let launch_target = match install_target.as_deref() {
-        Some("wsl") => acp::AcpLaunchTarget::Wsl {
-            distro: distro.ok_or("WSL distro is required for WSL ACP scan".to_string())?,
-            user,
-        },
-        _ => acp::AcpLaunchTarget::Local,
-    };
-    let location_key = launch_target.location_key();
-    let location_label = launch_target.location_label();
-    let wsl_distro = match &launch_target {
-        acp::AcpLaunchTarget::Wsl { distro, .. } => Some(distro.clone()),
-        acp::AcpLaunchTarget::Local => None,
-    };
-    let mut result = Vec::new();
+    detect_acp_agents_for_target(acp_manager, install_target, distro, user).await
+}
 
-    for definition in acp::acp_runtime_definitions() {
-        let runtime_state = runtime_summary.get(&format!("{location_key}::{}", definition.id));
-        let installed = match &launch_target {
-            acp::AcpLaunchTarget::Local => command_exists(definition.install_probe).await,
-            acp::AcpLaunchTarget::Wsl { distro, user } => {
-                command_exists_in_wsl(definition.install_probe, distro, user.as_deref()).await
-            }
-        };
-        let runtime_supported = runtime_state.is_some()
-            || match &launch_target {
-                acp::AcpLaunchTarget::Local => command_exists(definition.runtime_probe).await,
-                acp::AcpLaunchTarget::Wsl { distro, user } => {
-                    command_exists_in_wsl(definition.runtime_probe, distro, user.as_deref()).await
-                }
-            };
-        let version = if let Some(version) =
-            runtime_state.and_then(|state| state.runtime_version.clone())
-        {
-            Some(version)
-        } else if installed {
-            match &launch_target {
-                acp::AcpLaunchTarget::Local => detect_agent_version(definition.install_probe).await,
-                acp::AcpLaunchTarget::Wsl { distro, user } => {
-                    detect_agent_version_in_wsl(definition.install_probe, distro, user.as_deref())
-                        .await
-                }
-            }
-        } else {
-            None
-        };
-        let pid = runtime_state.and_then(|state| state.pid);
-        let status = if !installed {
-            "not_installed"
-        } else if !runtime_supported {
-            "runtime_missing"
-        } else if let Some(state) = runtime_state {
-            state.status.as_str()
-        } else {
-            "disconnected"
-        };
-        let executable = if runtime_supported {
-            definition.executable_display
-        } else {
-            definition.install_probe
-        };
+#[tauri::command]
+async fn get_env_agent_scan_cache(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    env_id: String,
+) -> Result<Vec<AgentInfo>, String> {
+    let db = {
+        let state = state.lock().await;
+        state.db.clone()
+    };
 
-        result.push(AcpAgentInfo {
-            id: definition.id.to_string(),
-            name: definition.name.to_string(),
-            executable: executable.to_string(),
-            status: status.to_string(),
-            version,
-            pid,
-            protocol_version: runtime_state.and_then(|state| state.protocol_version.clone()),
-            last_error: runtime_state.and_then(|state| state.last_error.clone()),
-            runtime_supported,
-            install_hint: Some(
-                if !installed {
-                    definition.install_hint
-                } else {
-                    definition
-                        .runtime_install_hint
-                        .unwrap_or(definition.install_hint)
-                }
-                .to_string(),
-            ),
-            install_target: launch_target.install_target().to_string(),
-            location_label: location_label.clone(),
-            wsl_distro: wsl_distro.clone(),
-        });
+    db.list_env_agent_detections(&env_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn refresh_env_agent_scan_cache(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    env_id: String,
+) -> Result<Vec<AgentInfo>, String> {
+    let db = {
+        let state = state.lock().await;
+        state.db.clone()
+    };
+    let agents = detect_agents_for_env(&db, &env_id).await?;
+    db.upsert_env_agent_detections(&env_id, &agents)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(agents)
+}
+
+#[tauri::command]
+async fn get_acp_agent_scan_cache(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    install_target: Option<String>,
+    distro: Option<String>,
+) -> Result<Vec<AcpAgentInfo>, String> {
+    let db = {
+        let state = state.lock().await;
+        state.db.clone()
+    };
+    let target = install_target.unwrap_or_else(|| "local".to_string());
+    if target == "wsl" && distro.is_none() {
+        return Err("WSL distro is required for WSL ACP cache".to_string());
+    }
+    let scope_key = acp_scope_key(&target, distro.as_deref());
+    db.list_acp_agent_detections(&scope_key)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn refresh_acp_agent_scan_cache(
+    state: State<'_, Arc<Mutex<AppState>>>,
+    install_target: Option<String>,
+    distro: Option<String>,
+    user: Option<String>,
+) -> Result<Vec<AcpAgentInfo>, String> {
+    let (db, acp_manager) = {
+        let state = state.lock().await;
+        (state.db.clone(), state.acp_manager.clone())
+    };
+    let target = install_target.unwrap_or_else(|| "local".to_string());
+    if target == "wsl" && distro.is_none() {
+        return Err("WSL distro is required for WSL ACP scan".to_string());
     }
 
-    Ok(result)
+    let agents = detect_acp_agents_for_target(
+        acp_manager,
+        Some(target.clone()),
+        distro.clone(),
+        user,
+    )
+    .await?;
+    let scope_key = acp_scope_key(&target, distro.as_deref());
+    db.upsert_acp_agent_detections(&scope_key, &agents)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(agents)
+}
+
+#[tauri::command]
+async fn refresh_agent_management_cache_on_startup(
+    state: State<'_, Arc<Mutex<AppState>>>,
+) -> Result<(), String> {
+    let (db, acp_manager) = {
+        let state = state.lock().await;
+        (state.db.clone(), state.acp_manager.clone())
+    };
+
+    let envs = db.list_envs().await.map_err(|e| e.to_string())?;
+    for env in envs {
+        if env.env_type != "local" && env.env_type != "wsl" {
+            continue;
+        }
+        match detect_agents_for_env(&db, &env.id).await {
+            Ok(agents) => {
+                if let Err(err) = db.upsert_env_agent_detections(&env.id, &agents).await {
+                    eprintln!(
+                        "Failed to persist env agent detection cache for {}: {}",
+                        env.id, err
+                    );
+                }
+            }
+            Err(err) => {
+                eprintln!("Failed to detect agents for env {}: {}", env.id, err);
+            }
+        }
+    }
+
+    match detect_acp_agents_for_target(
+        acp_manager.clone(),
+        Some("local".to_string()),
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(local_agents) => {
+            if let Err(err) = db.upsert_acp_agent_detections("local", &local_agents).await {
+                eprintln!("Failed to persist local ACP cache: {}", err);
+            }
+        }
+        Err(err) => {
+            eprintln!("Failed to detect local ACP agents: {}", err);
+        }
+    }
+
+    let configured_wsl_env_id = db
+        .get_setting("acp_wsl_env_id")
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(env_id) = configured_wsl_env_id {
+        if let Ok(env) = db.get_env(&env_id).await {
+            if env.env_type == "wsl" {
+                if let Some(distro) = env.wsl_distro {
+                    let user = env.wsl_user;
+                    match detect_acp_agents_for_target(
+                        acp_manager,
+                        Some("wsl".to_string()),
+                        Some(distro.clone()),
+                        user,
+                    )
+                    .await
+                    {
+                        Ok(wsl_agents) => {
+                            let scope_key = acp_scope_key("wsl", Some(&distro));
+                            if let Err(err) =
+                                db.upsert_acp_agent_detections(&scope_key, &wsl_agents).await
+                            {
+                                eprintln!("Failed to persist WSL ACP cache for {}: {}", distro, err);
+                            }
+                        }
+                        Err(err) => {
+                            eprintln!("Failed to detect WSL ACP agents for {}: {}", distro, err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1063,24 +1362,11 @@ async fn scan_agents_for_env(
     state: State<'_, Arc<Mutex<AppState>>>,
     env_id: String,
 ) -> Result<Vec<AgentInfo>, String> {
-    let state = state.lock().await;
-    let env = state.db.get_env(&env_id).await.map_err(|e| e.to_string())?;
-
-    if env.env_type == "local" {
-        // For local env, use the regular scan_agents function
-        drop(state);
-        scan_agents().await
-    } else if env.env_type == "wsl" {
-        // For WSL env, scan inside the WSL distro
-        let distro = env.wsl_distro.ok_or("WSL distribution not configured")?;
-        let user = env.wsl_user.as_deref();
-        wsl::scan_agents_in_distro(&distro, user)
-            .await
-            .map_err(|e| e.to_string())
-    } else {
-        // For SSH or other env types, return empty result for now
-        Ok(Vec::new())
-    }
+    let db = {
+        let state = state.lock().await;
+        state.db.clone()
+    };
+    detect_agents_for_env(&db, &env_id).await
 }
 
 #[tauri::command]
@@ -1469,6 +1755,11 @@ fn main() {
             check_agent_installed,
             scan_agents,
             list_acp_agents,
+            get_env_agent_scan_cache,
+            refresh_env_agent_scan_cache,
+            get_acp_agent_scan_cache,
+            refresh_acp_agent_scan_cache,
+            refresh_agent_management_cache_on_startup,
             get_acp_wsl_env_id,
             set_acp_wsl_env_id,
             create_acp_session,

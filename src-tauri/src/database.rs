@@ -187,6 +187,51 @@ impl Database {
         .execute(&self.pool)
         .await?;
 
+        // Cache of "agents detected in environment" for EnvManagePage
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS env_agent_detections (
+                env_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                executable TEXT NOT NULL,
+                installed INTEGER NOT NULL,
+                version TEXT,
+                scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (env_id, agent_id),
+                FOREIGN KEY (env_id) REFERENCES envs(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Cache of ACP connectivity/runtime status for EnvManagePage
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS acp_agent_detections (
+                scope_key TEXT NOT NULL,
+                install_target TEXT NOT NULL,
+                wsl_distro TEXT,
+                agent_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                executable TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version TEXT,
+                pid INTEGER,
+                protocol_version TEXT,
+                last_error TEXT,
+                runtime_supported INTEGER NOT NULL,
+                install_hint TEXT,
+                location_label TEXT NOT NULL,
+                scanned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (scope_key, agent_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         // Create projects table
         sqlx::query(
             r#"
@@ -807,6 +852,200 @@ impl Database {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn upsert_env_agent_detections(
+        &self,
+        env_id: &str,
+        agents: &[crate::AgentInfo],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        for agent in agents {
+            sqlx::query(
+                r#"
+                INSERT INTO env_agent_detections (env_id, agent_id, name, executable, installed, version, scanned_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))
+                ON CONFLICT(env_id, agent_id)
+                DO UPDATE SET
+                    name = excluded.name,
+                    executable = excluded.executable,
+                    installed = excluded.installed,
+                    version = excluded.version,
+                    scanned_at = datetime('now')
+                "#,
+            )
+            .bind(env_id)
+            .bind(&agent.id)
+            .bind(&agent.name)
+            .bind(&agent.executable)
+            .bind(agent.installed)
+            .bind(&agent.version)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn list_env_agent_detections(
+        &self,
+        env_id: &str,
+    ) -> Result<Vec<crate::AgentInfo>, sqlx::Error> {
+        use sqlx::Row;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT agent_id, name, executable, installed, version
+            FROM env_agent_detections
+            WHERE env_id = ?1
+            ORDER BY CASE agent_id
+                WHEN 'claude' THEN 1
+                WHEN 'codex' THEN 2
+                WHEN 'gemini' THEN 3
+                WHEN 'opencode' THEN 4
+                WHEN 'openclaw' THEN 5
+                ELSE 99
+            END
+            "#,
+        )
+        .bind(env_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(crate::AgentInfo {
+                    id: row.try_get("agent_id")?,
+                    name: row.try_get("name")?,
+                    executable: row.try_get("executable")?,
+                    installed: row.try_get::<i64, _>("installed")? != 0,
+                    version: row.try_get("version")?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn upsert_acp_agent_detections(
+        &self,
+        scope_key: &str,
+        agents: &[crate::AcpAgentInfo],
+    ) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        for agent in agents {
+            sqlx::query(
+                r#"
+                INSERT INTO acp_agent_detections (
+                    scope_key,
+                    install_target,
+                    wsl_distro,
+                    agent_id,
+                    name,
+                    executable,
+                    status,
+                    version,
+                    pid,
+                    protocol_version,
+                    last_error,
+                    runtime_supported,
+                    install_hint,
+                    location_label,
+                    scanned_at
+                )
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))
+                ON CONFLICT(scope_key, agent_id)
+                DO UPDATE SET
+                    install_target = excluded.install_target,
+                    wsl_distro = excluded.wsl_distro,
+                    name = excluded.name,
+                    executable = excluded.executable,
+                    status = excluded.status,
+                    version = excluded.version,
+                    pid = excluded.pid,
+                    protocol_version = excluded.protocol_version,
+                    last_error = excluded.last_error,
+                    runtime_supported = excluded.runtime_supported,
+                    install_hint = excluded.install_hint,
+                    location_label = excluded.location_label,
+                    scanned_at = datetime('now')
+                "#,
+            )
+            .bind(scope_key)
+            .bind(&agent.install_target)
+            .bind(&agent.wsl_distro)
+            .bind(&agent.id)
+            .bind(&agent.name)
+            .bind(&agent.executable)
+            .bind(&agent.status)
+            .bind(&agent.version)
+            .bind(agent.pid.map(i64::from))
+            .bind(&agent.protocol_version)
+            .bind(&agent.last_error)
+            .bind(agent.runtime_supported)
+            .bind(&agent.install_hint)
+            .bind(&agent.location_label)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn list_acp_agent_detections(
+        &self,
+        scope_key: &str,
+    ) -> Result<Vec<crate::AcpAgentInfo>, sqlx::Error> {
+        use sqlx::Row;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT
+                agent_id,
+                name,
+                executable,
+                status,
+                version,
+                pid,
+                protocol_version,
+                last_error,
+                runtime_supported,
+                install_hint,
+                install_target,
+                location_label,
+                wsl_distro
+            FROM acp_agent_detections
+            WHERE scope_key = ?1
+            ORDER BY CASE agent_id
+                WHEN 'claude' THEN 1
+                WHEN 'codex' THEN 2
+                WHEN 'gemini' THEN 3
+                WHEN 'opencode' THEN 4
+                ELSE 99
+            END
+            "#,
+        )
+        .bind(scope_key)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(crate::AcpAgentInfo {
+                    id: row.try_get("agent_id")?,
+                    name: row.try_get("name")?,
+                    executable: row.try_get("executable")?,
+                    status: row.try_get("status")?,
+                    version: row.try_get("version")?,
+                    pid: row.try_get::<Option<i64>, _>("pid")?.map(|value| value as u32),
+                    protocol_version: row.try_get("protocol_version")?,
+                    last_error: row.try_get("last_error")?,
+                    runtime_supported: row.try_get::<i64, _>("runtime_supported")? != 0,
+                    install_hint: row.try_get("install_hint")?,
+                    install_target: row.try_get("install_target")?,
+                    location_label: row.try_get("location_label")?,
+                    wsl_distro: row.try_get("wsl_distro")?,
+                })
+            })
+            .collect()
     }
 
     // Project management methods

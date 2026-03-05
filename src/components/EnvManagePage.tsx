@@ -529,13 +529,12 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
       ]
       setAcpAgents(initialAgents)
 
-      const scopes: Promise<AcpAgent[]>[] = [invoke<AcpAgent[]>('list_acp_agents')]
+      const scopes: Promise<AcpAgent[]>[] = [invoke<AcpAgent[]>('get_acp_agent_scan_cache')]
       if (wslInstalled && configuredWslEnv?.wsl_distro) {
         scopes.push(
-          invoke<AcpAgent[]>('list_acp_agents', {
+          invoke<AcpAgent[]>('get_acp_agent_scan_cache', {
             installTarget: 'wsl',
             distro: configuredWslEnv.wsl_distro,
-            user: configuredWslEnv.wsl_user ?? null,
           }),
         )
       }
@@ -581,6 +580,70 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     }
   }
 
+  const refreshAcpAgents = async () => {
+    setLoadingAcpAgents(true)
+    try {
+      const configuredWslEnv = envs.find((env) => env.id === configuredAcpWslEnvId && env.type === 'wsl')
+      const initialAgents = [
+        ...ACP_AGENT_SKELETON,
+        ...(configuredWslEnv?.wsl_distro
+          ? buildWslAcpSkeleton(`WSL 路 ${configuredWslEnv.wsl_distro}`, configuredWslEnv.wsl_distro)
+          : []),
+      ]
+      setAcpAgents(initialAgents)
+
+      const scopes: Promise<AcpAgent[]>[] = [invoke<AcpAgent[]>('refresh_acp_agent_scan_cache')]
+      if (wslInstalled && configuredWslEnv?.wsl_distro) {
+        scopes.push(
+          invoke<AcpAgent[]>('refresh_acp_agent_scan_cache', {
+            installTarget: 'wsl',
+            distro: configuredWslEnv.wsl_distro,
+            user: configuredWslEnv.wsl_user ?? null,
+          }),
+        )
+      }
+      const settled = await Promise.allSettled(scopes)
+      const detected = settled
+        .flatMap((result) => result.status === 'fulfilled' ? result.value : [])
+        .map((agent) => ({
+          ...agent,
+          name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+        }))
+      const detectedByKey = new Map(detected.map((agent) => [getAcpAgentKey(agent), agent]))
+      const mergedLocalAgents = ACP_AGENT_SKELETON.map((agent) => ({
+        ...agent,
+        ...detectedByKey.get(getAcpAgentKey(agent)),
+        name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+      }))
+      const mergedWslAgents = (configuredWslEnv?.wsl_distro
+        ? buildWslAcpSkeleton(`WSL 路 ${configuredWslEnv.wsl_distro}`, configuredWslEnv.wsl_distro)
+        : []
+      ).map((agent) => ({
+        ...agent,
+        ...detectedByKey.get(getAcpAgentKey(agent)),
+        name: AGENT_REGISTRY[agent.id]?.name || agent.name,
+      })).sort((left, right) => {
+          const leftConnected = left.status === 'ready'
+          const rightConnected = right.status === 'ready'
+          if (leftConnected !== rightConnected) {
+            return leftConnected ? -1 : 1
+          }
+          return ACP_AGENT_ORDER.indexOf(left.id as typeof ACP_AGENT_ORDER[number]) - ACP_AGENT_ORDER.indexOf(right.id as typeof ACP_AGENT_ORDER[number])
+        })
+      const mergedAgents = [...mergedLocalAgents, ...mergedWslAgents]
+
+      setAcpAgents(mergedAgents)
+      if (!mergedAgents.some(agent => getAcpAgentKey(agent) === selectedAgentKey) && mergedAgents.length > 0) {
+        setSelectedAgentKey(getAcpAgentKey(mergedAgents[0]))
+      }
+    } catch (error) {
+      console.error('Failed to refresh ACP agents:', error)
+      setAcpAgents(ACP_AGENT_SKELETON)
+    } finally {
+      setLoadingAcpAgents(false)
+    }
+  }
+
   const saveAcpWslConfig = async () => {
     try {
       const nextValue = pendingAcpWslEnvId || null
@@ -591,23 +654,36 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
     }
   }
 
+  const loadCachedAgents = async () => {
+    if (!selectedEnv) {
+      setDetectedAgents(null)
+      return
+    }
+    if (selectedEnv.type !== 'local' && selectedEnv.type !== 'wsl' && selectedEnv.type !== 'ssh') {
+      setDetectedAgents(null)
+      return
+    }
+    try {
+      const agents = await invoke<AgentInfo[]>('get_env_agent_scan_cache', { envId: selectedEnv.id })
+      setDetectedAgents(agents)
+    } catch (error) {
+      console.error('Failed to load cached agents:', error)
+      setDetectedAgents(null)
+    }
+  }
+
   const scanAgents = async () => {
     if (!selectedEnv) {
       setDetectedAgents(null)
       return
     }
-    if (selectedEnv.type !== 'local' && selectedEnv.type !== 'wsl') {
+    if (selectedEnv.type !== 'local' && selectedEnv.type !== 'wsl' && selectedEnv.type !== 'ssh') {
       setDetectedAgents(null)
       return
     }
     setScanningAgents(true)
     try {
-      let agents: AgentInfo[]
-      if (selectedEnv.type === 'local') {
-        agents = await invoke<AgentInfo[]>('scan_agents')
-      } else {
-        agents = await invoke<AgentInfo[]>('scan_agents_for_env', { envId: selectedEnv.id })
-      }
+      const agents = await invoke<AgentInfo[]>('refresh_env_agent_scan_cache', { envId: selectedEnv.id })
       setDetectedAgents(agents)
     } catch (error) {
       console.error('Failed to scan agents:', error)
@@ -620,7 +696,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
   // Scan agents when selected environment changes
   useEffect(() => {
     if (activeTab === 'envs') {
-      scanAgents()
+      loadCachedAgents()
     }
   }, [selectedEnvId, activeTab])
 
@@ -1079,7 +1155,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                 {scanningAgents && (
                   <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
                 )}
-                {(selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl') && !scanningAgents && (
+                {(selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl' || selectedEnv?.type === 'ssh') && !scanningAgents && (
                   <button
                     onClick={scanAgents}
                     className="text-[10px] text-[#8b8fa7] hover:text-[#E8915A] transition-colors"
@@ -1132,7 +1208,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400">
                               未找到
                             </span>
-                          ) : selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl' ? (
+                          ) : selectedEnv?.type === 'local' || selectedEnv?.type === 'wsl' || selectedEnv?.type === 'ssh' ? (
                             <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-500">
                               -
                             </span>
@@ -1206,7 +1282,7 @@ export default function EnvManagePage({ onBack, onEnvChange }: EnvManagePageProp
         {activeTab === 'agents' && selectedAcpAgent && (
           <RealAgentDetail
             agent={selectedAcpAgent}
-            onRefresh={loadAcpAgents}
+            onRefresh={refreshAcpAgents}
             refreshing={loadingAcpAgents}
           />
         )}
