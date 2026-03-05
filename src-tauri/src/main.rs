@@ -484,6 +484,7 @@ fn into_create_session_record(
         env_id: info.env_id,
         agent_id: info.agent_id,
         acp_agent_id: info.acp_agent_id,
+        acp_runtime_session_id: None,
         project_id: info.project_id,
         working_dir: info.working_dir,
     }
@@ -953,11 +954,16 @@ async fn create_acp_session(
         })
         .ok_or("ACP session requires a working directory".to_string())?;
     let launch_target = resolve_acp_launch_target(&db, &session_id, session_info.as_ref()).await?;
+    let previous_acp_runtime_session_id = db
+        .get_acp_runtime_session_id(&session_id)
+        .await
+        .map_err(|err| err.to_string())?;
 
     let result = acp_manager
         .create_session(
             session_id.clone(),
             acp_agent_id,
+            previous_acp_runtime_session_id,
             launch_target,
             resolved_working_dir.clone(),
             db.clone(),
@@ -966,11 +972,16 @@ async fn create_acp_session(
         .await?;
 
     if let Some(info) = session_info {
-        let record = into_create_session_record(session_id.clone(), info);
+        let mut record = into_create_session_record(session_id.clone(), info);
+        record.acp_runtime_session_id = Some(result.acp_runtime_session_id.clone());
         if let Err(err) = db.create_session(&record).await {
             let _ = acp_manager.close_session(&session_id).await;
             return Err(err.to_string());
         }
+    } else {
+        db.set_acp_runtime_session_id(&session_id, Some(&result.acp_runtime_session_id))
+            .await
+            .map_err(|err| err.to_string())?;
     }
 
     Ok(result)

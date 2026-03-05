@@ -160,13 +160,14 @@ function App() {
     const session = sessions.find(s => s.id === id)
     if (session) {
       try {
-        if (isAcpSession(session)) {
-          await invoke('close_acp_session', { sessionId: id })
-        } else {
+        if (!isAcpSession(session)) {
           await invoke('close_session', {
             sessionId: id,
             sessionType: session.type,
           })
+        } else {
+          // For ACP, keep runtime session alive so reconnect can continue the same ACP context.
+          // Actual runtime shutdown happens on delete.
         }
       } catch (error) {
         console.error('Failed to close session:', error)
@@ -185,7 +186,15 @@ function App() {
   }
 
   const deleteSession = async (id: string) => {
+    const session = sessions.find(s => s.id === id)
     try {
+      if (session && isAcpSession(session)) {
+        try {
+          await invoke('close_acp_session', { sessionId: id })
+        } catch (closeError) {
+          console.warn('Failed to close ACP runtime before delete, continue deleting record:', closeError)
+        }
+      }
       await invoke('delete_session_record', { sessionId: id })
       setSessions(prev => prev.filter(s => s.id !== id))
       if (activeSessionId === id) {

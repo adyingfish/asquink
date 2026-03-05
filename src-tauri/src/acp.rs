@@ -95,6 +95,7 @@ pub struct AcpCreateSessionResult {
     pub session_id: String,
     pub runtime_agent_id: String,
     pub runtime_agent_name: String,
+    pub acp_runtime_session_id: String,
     pub status: String,
 }
 
@@ -232,13 +233,27 @@ impl AcpManager {
         &self,
         session_id: String,
         runtime_agent_id: String,
+        previous_acp_runtime_session_id: Option<String>,
         launch_target: AcpLaunchTarget,
         working_dir: String,
         db: Database,
         app_handle: AppHandle,
     ) -> Result<AcpCreateSessionResult, String> {
-        if self.sessions.lock().await.contains_key(&session_id) {
-            return Err("ACP session already exists".to_string());
+        if let Some(existing) = self.sessions.lock().await.get(&session_id).cloned() {
+            let acp_runtime_session_id = existing
+                .acp_session_id
+                .lock()
+                .await
+                .clone()
+                .ok_or("ACP session exists but runtime session id is unavailable".to_string())?;
+            let status = existing.current_status().await;
+            return Ok(AcpCreateSessionResult {
+                session_id,
+                runtime_agent_id: existing.runtime_agent_id.clone(),
+                runtime_agent_name: existing.runtime_agent_name.clone(),
+                acp_runtime_session_id,
+                status,
+            });
         }
 
         let runtime_definition = acp_runtime_definition(&runtime_agent_id)
@@ -293,6 +308,11 @@ impl AcpManager {
 
         let handshake_result: Result<AcpCreateSessionResult, String> = async {
             session.set_status("handshaking").await;
+            let reusable_acp_session_id = previous_acp_runtime_session_id
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string());
 
             let initialize_result = session
                 .request(
@@ -304,7 +324,7 @@ impl AcpManager {
                             "version": env!("CARGO_PKG_VERSION"),
                         },
                         "capabilities": {
-                            "loadSession": false,
+                            "loadSession": reusable_acp_session_id.is_some(),
                             "promptCapabilities": {
                                 "image": false,
                                 "audio": false,
@@ -313,6 +333,15 @@ impl AcpManager {
                     }),
                 )
                 .await?;
+            let runtime_supports_load_session = bool_at(
+                &initialize_result,
+                &[
+                    "agentCapabilities.loadSession",
+                    "capabilities.loadSession",
+                    "loadSession",
+                ],
+            )
+            .unwrap_or(false);
 
             let protocol_version = string_at(
                 &initialize_result,
@@ -331,23 +360,64 @@ impl AcpManager {
                 *stored = runtime_version;
             }
 
-            let new_session_result = session
-                .request(
-                    "session/new",
-                    json!({
-                        "cwd": session.working_dir.clone(),
-                        "mcpServers": [],
-                    }),
-                )
-                .await?;
+            let acp_session_id = if let Some(existing_acp_session_id) = reusable_acp_session_id
+                .filter(|_| runtime_supports_load_session)
+            {
+                match session
+                    .request(
+                        "session/load",
+                        json!({
+                            "sessionId": existing_acp_session_id,
+                            "cwd": session.working_dir.clone(),
+                            "mcpServers": [],
+                        }),
+                    )
+                    .await
+                {
+                    Ok(load_result) => {
+                        string_at(&load_result, &["sessionId", "session.id", "id"]).unwrap_or(
+                            existing_acp_session_id,
+                        )
+                    }
+                    Err(_) => {
+                        let new_session_result = session
+                            .request(
+                                "session/new",
+                                json!({
+                                    "cwd": session.working_dir.clone(),
+                                    "mcpServers": [],
+                                }),
+                            )
+                            .await?;
 
-            let acp_session_id = string_at(&new_session_result, &["sessionId", "session.id", "id"])
-                .ok_or("ACP runtime did not return a session id".to_string())?;
+                        string_at(&new_session_result, &["sessionId", "session.id", "id"])
+                            .ok_or("ACP runtime did not return a session id".to_string())?
+                    }
+                }
+            } else {
+                let new_session_result = session
+                    .request(
+                        "session/new",
+                        json!({
+                            "cwd": session.working_dir.clone(),
+                            "mcpServers": [],
+                        }),
+                    )
+                    .await?;
+
+                string_at(&new_session_result, &["sessionId", "session.id", "id"])
+                    .ok_or("ACP runtime did not return a session id".to_string())?
+            };
 
             {
                 let mut stored = session.acp_session_id.lock().await;
-                *stored = Some(acp_session_id);
+                *stored = Some(acp_session_id.clone());
             }
+            session
+                .db
+                .set_acp_runtime_session_id(&session.session_id, Some(&acp_session_id))
+                .await
+                .map_err(|err| err.to_string())?;
 
             session.set_status("ready").await;
 
@@ -355,6 +425,7 @@ impl AcpManager {
                 session_id: session_id.clone(),
                 runtime_agent_id: session.runtime_agent_id.clone(),
                 runtime_agent_name: session.runtime_agent_name.clone(),
+                acp_runtime_session_id: acp_session_id,
                 status: "ready".to_string(),
             })
         }
@@ -984,6 +1055,18 @@ fn string_at(value: &Value, paths: &[&str]) -> Option<String> {
             }
             if let Some(number) = found.as_u64() {
                 return Some(number.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn bool_at(value: &Value, paths: &[&str]) -> Option<bool> {
+    for path in paths {
+        if let Some(found) = nested_value(value, path) {
+            if let Some(boolean) = found.as_bool() {
+                return Some(boolean);
             }
         }
     }

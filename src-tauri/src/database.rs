@@ -57,6 +57,7 @@ pub struct CreateSessionRecord {
     pub env_id: Option<String>,
     pub agent_id: Option<String>,
     pub acp_agent_id: Option<String>,
+    pub acp_runtime_session_id: Option<String>,
     pub project_id: Option<String>,
     pub working_dir: Option<String>,
 }
@@ -158,6 +159,7 @@ impl Database {
                 env_id TEXT,
                 agent_id TEXT,
                 acp_agent_id TEXT,
+                acp_runtime_session_id TEXT,
                 project_id TEXT,
                 working_dir TEXT,
                 started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -425,6 +427,11 @@ impl Database {
                 .execute(&self.pool)
                 .await?;
         }
+        if !has_column("acp_runtime_session_id") {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN acp_runtime_session_id TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
 
         if has_column("env_type") || has_column("project_path") {
             let working_dir_expr = if has_column("project_path") {
@@ -446,6 +453,7 @@ impl Database {
                     env_id TEXT,
                     agent_id TEXT,
                     acp_agent_id TEXT,
+                    acp_runtime_session_id TEXT,
                     project_id TEXT,
                     working_dir TEXT,
                     started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -460,8 +468,8 @@ impl Database {
 
             let copy_sql = format!(
                 r#"
-                INSERT INTO sessions_new (id, name, env_id, agent_id, acp_agent_id, project_id, working_dir, started_at, ended_at)
-                SELECT id, name, env_id, agent_id, NULL, project_id, {working_dir_expr}, started_at, ended_at
+                INSERT INTO sessions_new (id, name, env_id, agent_id, acp_agent_id, acp_runtime_session_id, project_id, working_dir, started_at, ended_at)
+                SELECT id, name, env_id, agent_id, NULL, NULL, project_id, {working_dir_expr}, started_at, ended_at
                 FROM sessions
                 "#
             );
@@ -898,8 +906,8 @@ impl Database {
     pub async fn create_session(&self, session: &CreateSessionRecord) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO sessions (id, name, env_id, agent_id, acp_agent_id, project_id, working_dir, started_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+            INSERT INTO sessions (id, name, env_id, agent_id, acp_agent_id, acp_runtime_session_id, project_id, working_dir, started_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'))
             "#,
         )
         .bind(&session.id)
@@ -907,10 +915,36 @@ impl Database {
         .bind(&session.env_id)
         .bind(&session.agent_id)
         .bind(&session.acp_agent_id)
+        .bind(&session.acp_runtime_session_id)
         .bind(&session.project_id)
         .bind(&session.working_dir)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn get_acp_runtime_session_id(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let value: Option<Option<String>> =
+            sqlx::query_scalar("SELECT acp_runtime_session_id FROM sessions WHERE id = ?1 LIMIT 1")
+            .bind(session_id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(value.flatten())
+    }
+
+    pub async fn set_acp_runtime_session_id(
+        &self,
+        session_id: &str,
+        acp_runtime_session_id: Option<&str>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE sessions SET acp_runtime_session_id = ?1 WHERE id = ?2")
+            .bind(acp_runtime_session_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
