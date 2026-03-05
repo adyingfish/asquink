@@ -195,6 +195,7 @@ fn npm_package_json_for_executable(executable: &str) -> Option<PathBuf> {
         "codex" => Some(base.join("@openai").join("codex").join("package.json")),
         "gemini" => Some(base.join("@google").join("gemini-cli").join("package.json")),
         "opencode" => Some(base.join("opencode-ai").join("package.json")),
+        "openclaw" => Some(base.join("openclaw").join("package.json")),
         _ => None,
     }
 }

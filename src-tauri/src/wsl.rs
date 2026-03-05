@@ -334,30 +334,43 @@ pub async fn scan_agents_in_distro(
         let installed = output.map(|o| o.status.success()).unwrap_or(false);
 
         let version = if installed {
-            let mut version_cmd = Command::new("wsl.exe");
-            version_cmd.arg("--distribution");
-            version_cmd.arg(distro);
+            let probes = ["--version", "-v", "version"];
+            let mut resolved: Option<String> = None;
 
-            if let Some(u) = user {
-                version_cmd.arg("--user");
-                version_cmd.arg(u);
+            for probe in probes {
+                let mut version_cmd = Command::new("wsl.exe");
+                version_cmd.arg("--distribution");
+                version_cmd.arg(distro);
+
+                if let Some(u) = user {
+                    version_cmd.arg("--user");
+                    version_cmd.arg(u);
+                }
+
+                version_cmd.arg("--exec");
+                version_cmd.arg(executable);
+                version_cmd.arg(probe);
+
+                if let Ok(output) = version_cmd.output().await {
+                    if !output.status.success() {
+                        continue;
+                    }
+
+                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !stdout.is_empty() {
+                        resolved = Some(stdout);
+                        break;
+                    }
+
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    if !stderr.is_empty() {
+                        resolved = Some(stderr);
+                        break;
+                    }
+                }
             }
 
-            version_cmd.arg("--exec");
-            version_cmd.arg(executable);
-            version_cmd.arg("--version");
-
-            let version_output = version_cmd.output().await.ok();
-
-            version_output.and_then(|o| {
-                if o.status.success() {
-                    String::from_utf8(o.stdout)
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                } else {
-                    None
-                }
-            })
+            resolved
         } else {
             None
         };
