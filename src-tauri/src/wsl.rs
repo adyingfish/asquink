@@ -312,79 +312,167 @@ pub async fn scan_agents_in_distro(
     distro: &str,
     user: Option<&str>,
 ) -> Result<Vec<crate::AgentInfo>> {
-    let agents = crate::get_agent_definitions();
-    let mut result = Vec::new();
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("--distribution");
+    cmd.arg(distro);
 
-    for (id, name, executable) in agents {
-        // Build wsl command to check if executable exists
-        let mut cmd = Command::new("wsl.exe");
-        cmd.arg("--distribution");
-        cmd.arg(distro);
-
-        if let Some(u) = user {
-            cmd.arg("--user");
-            cmd.arg(u);
-        }
-
-        cmd.arg("--exec");
-        cmd.arg("which");
-        cmd.arg(executable);
-
-        let output = cmd.output().await;
-        let installed = output.map(|o| o.status.success()).unwrap_or(false);
-
-        let version = if installed {
-            let probes = ["--version", "-v", "version"];
-            let mut resolved: Option<String> = None;
-
-            for probe in probes {
-                let mut version_cmd = Command::new("wsl.exe");
-                version_cmd.arg("--distribution");
-                version_cmd.arg(distro);
-
-                if let Some(u) = user {
-                    version_cmd.arg("--user");
-                    version_cmd.arg(u);
-                }
-
-                version_cmd.arg("--exec");
-                version_cmd.arg(executable);
-                version_cmd.arg(probe);
-
-                if let Ok(output) = version_cmd.output().await {
-                    if !output.status.success() {
-                        continue;
-                    }
-
-                    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                    if !stdout.is_empty() {
-                        resolved = Some(stdout);
-                        break;
-                    }
-
-                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                    if !stderr.is_empty() {
-                        resolved = Some(stderr);
-                        break;
-                    }
-                }
-            }
-
-            resolved
-        } else {
-            None
-        };
-
-        result.push(crate::AgentInfo {
-            id: id.to_string(),
-            name: name.to_string(),
-            executable: executable.to_string(),
-            installed,
-            version,
-        });
+    if let Some(u) = user {
+        cmd.arg("--user");
+        cmd.arg(u);
     }
 
-    Ok(result)
+    cmd.arg("--exec");
+    cmd.arg("sh");
+    cmd.arg("-lc");
+    cmd.arg(WSL_AGENT_SCAN_SCRIPT);
+
+    let output = cmd.output().await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        anyhow::bail!(
+            "Failed to scan agents in WSL distro {}{}",
+            distro,
+            if stderr.is_empty() {
+                "".to_string()
+            } else {
+                format!(": {}", stderr)
+            }
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let mut parsed = parse_wsl_agent_scan_output(&stdout);
+    if parsed.is_empty() {
+        parsed = crate::get_agent_definitions()
+            .into_iter()
+            .map(|(id, name, executable)| crate::AgentInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                executable: executable.to_string(),
+                installed: false,
+                version: None,
+            })
+            .collect();
+    }
+
+    Ok(parsed)
+}
+
+const WSL_AGENT_SCAN_SCRIPT: &str = r#"
+add_path_if_dir() {
+  d="$1"
+  if [ -d "$d" ]; then
+    case ":$PATH:" in
+      *":$d:"*) ;;
+      *) PATH="$PATH:$d" ;;
+    esac
+  fi
+}
+
+add_path_if_dir "$HOME/.npm-global/bin"
+add_path_if_dir "$HOME/.local/bin"
+add_path_if_dir "$HOME/.bun/bin"
+add_path_if_dir "$HOME/.yarn/bin"
+add_path_if_dir "/usr/local/bin"
+add_path_if_dir "/opt/homebrew/bin"
+
+if [ -d "$HOME/.nvm/versions/node" ]; then
+  for p in "$HOME/.nvm/versions/node"/*/bin; do
+    [ -d "$p" ] && add_path_if_dir "$p"
+  done
+fi
+
+resolve_cmd() {
+  cmd="$1"
+  resolved=""
+  resolved="$(command -v "$cmd" 2>/dev/null | head -n 1)"
+  if [ -n "$resolved" ]; then
+    printf "%s\n" "$resolved"
+    return 0
+  fi
+  resolved="$(which "$cmd" 2>/dev/null | head -n 1)"
+  if [ -n "$resolved" ]; then
+    printf "%s\n" "$resolved"
+    return 0
+  fi
+  for base in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.yarn/bin" "/usr/local/bin" "/opt/homebrew/bin"; do
+    if [ -x "$base/$cmd" ]; then
+      printf "%s\n" "$base/$cmd"
+      return 0
+    fi
+  done
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    for p in "$HOME/.nvm/versions/node"/*/bin; do
+      if [ -x "$p/$cmd" ]; then
+        printf "%s\n" "$p/$cmd"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+probe_version_fast() {
+  resolved="$1"
+  if command -v timeout >/dev/null 2>&1; then
+    v="$(timeout 3s "$resolved" --version 2>/dev/null | head -n 1)"
+    if [ -z "$v" ]; then v="$(timeout 3s "$resolved" -v 2>/dev/null | head -n 1)"; fi
+    printf "%s\n" "$v"
+  else
+    printf "%s\n" ""
+  fi
+}
+
+check_agent() {
+  id="$1"
+  name="$2"
+  cmd="$3"
+  resolved=""
+  installed=0
+  version=""
+  resolved="$(resolve_cmd "$cmd" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
+    installed=1
+    version="$(probe_version_fast "$resolved")"
+  fi
+  printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$name" "$cmd" "$installed" "$version"
+}
+
+check_agent "claude" "Claude Code" "claude"
+check_agent "codex" "Codex" "codex"
+check_agent "gemini" "Gemini CLI" "gemini"
+check_agent "opencode" "OpenCode" "opencode"
+check_agent "openclaw" "OpenClaw" "openclaw"
+"#;
+
+fn parse_wsl_agent_scan_output(stdout: &str) -> Vec<crate::AgentInfo> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(5, '\t');
+            let id = parts.next()?.trim();
+            let name = parts.next()?.trim();
+            let executable = parts.next()?.trim();
+            let installed = parts.next()?.trim() == "1";
+            let version = parts
+                .next()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string());
+
+            if id.is_empty() || name.is_empty() || executable.is_empty() {
+                return None;
+            }
+
+            Some(crate::AgentInfo {
+                id: id.to_string(),
+                name: name.to_string(),
+                executable: executable.to_string(),
+                installed,
+                version,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

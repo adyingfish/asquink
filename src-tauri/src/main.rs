@@ -461,11 +461,16 @@ async fn detect_agents_for_env(db: &Database, env_id: &str) -> Result<Vec<AgentI
     } else if env.env_type == "wsl" {
         let distro = env.wsl_distro.ok_or("WSL distribution not configured")?;
         let user = env.wsl_user.as_deref();
-        wsl::scan_agents_in_distro(&distro, user)
-            .await
-            .map_err(|e| e.to_string())
+        match timeout(Duration::from_secs(25), wsl::scan_agents_in_distro(&distro, user)).await {
+            Ok(Ok(agents)) => Ok(agents),
+            Ok(Err(err)) => Err(err.to_string()),
+            Err(_) => Err("WSL agent scan timed out after 25 seconds".to_string()),
+        }
     } else if env.env_type == "ssh" {
-        detect_agents_in_ssh_env(&env).await
+        match timeout(Duration::from_secs(25), detect_agents_in_ssh_env(&env)).await {
+            Ok(result) => result,
+            Err(_) => Err("SSH agent scan timed out after 25 seconds".to_string()),
+        }
     } else {
         Ok(Vec::new())
     }
@@ -473,17 +478,81 @@ async fn detect_agents_for_env(db: &Database, env_id: &str) -> Result<Vec<AgentI
 
 fn ssh_agent_scan_script() -> &'static str {
     r#"
+add_path_if_dir() {
+  d="$1"
+  if [ -d "$d" ]; then
+    case ":$PATH:" in
+      *":$d:"*) ;;
+      *) PATH="$PATH:$d" ;;
+    esac
+  fi
+}
+
+add_path_if_dir "$HOME/.npm-global/bin"
+add_path_if_dir "$HOME/.local/bin"
+add_path_if_dir "$HOME/.bun/bin"
+add_path_if_dir "$HOME/.yarn/bin"
+add_path_if_dir "/usr/local/bin"
+add_path_if_dir "/opt/homebrew/bin"
+
+if [ -d "$HOME/.nvm/versions/node" ]; then
+  for p in "$HOME/.nvm/versions/node"/*/bin; do
+    [ -d "$p" ] && add_path_if_dir "$p"
+  done
+fi
+
+resolve_cmd() {
+  cmd="$1"
+  resolved=""
+  resolved="$(command -v "$cmd" 2>/dev/null | head -n 1)"
+  if [ -n "$resolved" ]; then
+    printf "%s\n" "$resolved"
+    return 0
+  fi
+  resolved="$(which "$cmd" 2>/dev/null | head -n 1)"
+  if [ -n "$resolved" ]; then
+    printf "%s\n" "$resolved"
+    return 0
+  fi
+  for base in "$HOME/.npm-global/bin" "$HOME/.local/bin" "$HOME/.bun/bin" "$HOME/.yarn/bin" "/usr/local/bin" "/opt/homebrew/bin"; do
+    if [ -x "$base/$cmd" ]; then
+      printf "%s\n" "$base/$cmd"
+      return 0
+    fi
+  done
+  if [ -d "$HOME/.nvm/versions/node" ]; then
+    for p in "$HOME/.nvm/versions/node"/*/bin; do
+      if [ -x "$p/$cmd" ]; then
+        printf "%s\n" "$p/$cmd"
+        return 0
+      fi
+    done
+  fi
+  return 1
+}
+
+probe_version_fast() {
+  resolved="$1"
+  if command -v timeout >/dev/null 2>&1; then
+    v="$(timeout 3s "$resolved" --version 2>/dev/null | head -n 1)"
+    if [ -z "$v" ]; then v="$(timeout 3s "$resolved" -v 2>/dev/null | head -n 1)"; fi
+    printf "%s\n" "$v"
+  else
+    printf "%s\n" ""
+  fi
+}
+
 check_agent() {
   id="$1"
   name="$2"
   cmd="$3"
+  resolved=""
   installed=0
   version=""
-  if command -v "$cmd" >/dev/null 2>&1; then
+  resolved="$(resolve_cmd "$cmd" 2>/dev/null || true)"
+  if [ -n "$resolved" ]; then
     installed=1
-    version=$("$cmd" --version 2>/dev/null | head -n 1)
-    if [ -z "$version" ]; then version=$("$cmd" -v 2>/dev/null | head -n 1); fi
-    if [ -z "$version" ]; then version=$("$cmd" version 2>/dev/null | head -n 1); fi
+    version="$(probe_version_fast "$resolved")"
   fi
   printf "%s\t%s\t%s\t%s\t%s\n" "$id" "$name" "$cmd" "$installed" "$version"
 }
