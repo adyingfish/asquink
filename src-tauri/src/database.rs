@@ -1,5 +1,7 @@
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 
+use crate::process_utils::configure_std_command;
+
 #[derive(Clone)]
 pub struct Database {
     pool: Pool<Sqlite>,
@@ -370,7 +372,9 @@ impl Database {
         match os {
             "windows" => {
                 // Try PowerShell first
-                if let Ok(output) = std::process::Command::new("powershell")
+                let mut powershell = std::process::Command::new("powershell");
+                configure_std_command(&mut powershell);
+                if let Ok(output) = powershell
                     .args([
                         "-NoProfile",
                         "-Command",
@@ -392,8 +396,13 @@ impl Database {
                 }
 
                 // Fallback to registry via cmd
-                if let Ok(output) = std::process::Command::new("cmd")
-                    .args(["/C", "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v ProductName"])
+                let mut cmd = std::process::Command::new("cmd");
+                configure_std_command(&mut cmd);
+                if let Ok(output) = cmd
+                    .args([
+                        "/C",
+                        "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\" /v ProductName",
+                    ])
                     .output()
                 {
                     let stdout = String::from_utf8_lossy(&output.stdout);

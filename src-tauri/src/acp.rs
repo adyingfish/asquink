@@ -13,6 +13,7 @@ use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 use crate::database::{CreateMessageRecord, Database, MessageRecord};
+use crate::process_utils::configure_tokio_command;
 
 const ACP_PROTOCOL_VERSION: u32 = 1;
 const REQUEST_TIMEOUT_SECONDS: u64 = 45;
@@ -1188,6 +1189,7 @@ fn build_runtime_command(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    configure_tokio_command(&mut command);
 
     Ok(command)
 }

@@ -7,6 +7,7 @@ use tauri::Emitter;
 use tokio::process::Command;
 use tokio::sync::{Mutex, RwLock};
 
+use crate::process_utils::configure_tokio_command;
 use crate::session::{SessionStatus, TerminalSession};
 
 pub struct WslManager {
@@ -43,10 +44,9 @@ impl WslManager {
 
     /// List available WSL distributions
     pub async fn list_distros() -> Result<Vec<WslDistro>> {
-        let output = Command::new("wsl.exe")
-            .args(["--list", "--verbose"])
-            .output()
-            .await?;
+        let mut command = Command::new("wsl.exe");
+        configure_tokio_command(&mut command);
+        let output = command.args(["--list", "--verbose"]).output().await?;
 
         if !output.status.success() {
             anyhow::bail!("Failed to list WSL distributions");
@@ -66,7 +66,9 @@ impl WslManager {
 
     /// Check if WSL is installed
     pub async fn is_wsl_installed() -> bool {
-        Command::new("wsl.exe")
+        let mut command = Command::new("wsl.exe");
+        configure_tokio_command(&mut command);
+        command
             .arg("--status")
             .output()
             .await
@@ -313,6 +315,7 @@ pub async fn scan_agents_in_distro(
     user: Option<&str>,
 ) -> Result<Vec<crate::AgentInfo>> {
     let mut cmd = Command::new("wsl.exe");
+    configure_tokio_command(&mut cmd);
     cmd.arg("--distribution");
     cmd.arg(distro);
 

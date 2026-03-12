@@ -12,6 +12,7 @@ use tokio::time::{timeout, Duration};
 mod acp;
 mod database;
 mod pty;
+mod process_utils;
 mod session;
 mod ssh;
 mod wsl;
@@ -148,6 +149,7 @@ fn parse_version_output(stdout: &[u8], stderr: &[u8]) -> Option<String> {
 #[cfg(target_os = "windows")]
 async fn probe_version_with_cmd(executable: &str, args: &[&str]) -> Option<String> {
     let mut command = tokio::process::Command::new("cmd");
+    process_utils::configure_tokio_command(&mut command);
     command.arg("/C").arg(executable);
     for arg in args {
         command.arg(arg);
@@ -171,6 +173,7 @@ async fn probe_version_with_cmd(_executable: &str, _args: &[&str]) -> Option<Str
 
 async fn probe_version_direct(executable: &str, args: &[&str]) -> Option<String> {
     let mut command = tokio::process::Command::new(executable);
+    process_utils::configure_tokio_command(&mut command);
     for arg in args {
         command.arg(arg);
     }
@@ -235,7 +238,9 @@ async fn command_exists(executable: &str) -> bool {
         "which"
     };
 
-    tokio::process::Command::new(which_cmd)
+    let mut command = tokio::process::Command::new(which_cmd);
+    process_utils::configure_tokio_command(&mut command);
+    command
         .arg(executable)
         .output()
         .await
@@ -245,6 +250,7 @@ async fn command_exists(executable: &str) -> bool {
 
 async fn command_exists_in_wsl(executable: &str, distro: &str, user: Option<&str>) -> bool {
     let mut command = tokio::process::Command::new("wsl.exe");
+    process_utils::configure_tokio_command(&mut command);
     command.arg("--distribution").arg(distro);
     if let Some(user) = user {
         command.arg("--user").arg(user);
@@ -265,6 +271,7 @@ async fn probe_version_in_wsl(
     user: Option<&str>,
 ) -> Option<String> {
     let mut command = tokio::process::Command::new("wsl.exe");
+    process_utils::configure_tokio_command(&mut command);
     command.arg("--distribution").arg(distro);
     if let Some(user) = user {
         command.arg("--user").arg(user);
@@ -408,12 +415,11 @@ async fn detect_agent_pid(executable: &str) -> Option<u32> {
         clauses
     );
 
-    let output = timeout(
-        Duration::from_secs(3),
-        tokio::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &script])
-            .output(),
-    )
+    let output = timeout(Duration::from_secs(3), async {
+        let mut command = tokio::process::Command::new("powershell");
+        process_utils::configure_tokio_command(&mut command);
+        command.args(["-NoProfile", "-Command", &script]).output().await
+    })
     .await
     .ok()?
     .ok()?;
@@ -1066,7 +1072,9 @@ async fn check_agent_installed(agent: String) -> Result<AgentStatus, String> {
     } else {
         "which"
     };
-    let output = tokio::process::Command::new(which_cmd)
+    let mut command = tokio::process::Command::new(which_cmd);
+    process_utils::configure_tokio_command(&mut command);
+    let output = command
         .arg(&agent)
         .output()
         .await
@@ -1093,10 +1101,9 @@ async fn scan_agents() -> Result<Vec<AgentInfo>, String> {
     let mut result = Vec::new();
 
     for (id, name, executable) in agents {
-        let output = tokio::process::Command::new(which_cmd)
-            .arg(executable)
-            .output()
-            .await;
+        let mut command = tokio::process::Command::new(which_cmd);
+        process_utils::configure_tokio_command(&mut command);
+        let output = command.arg(executable).output().await;
 
         let installed = output.map(|o| o.status.success()).unwrap_or(false);
         let version = if installed {
