@@ -1,7 +1,7 @@
 [package]
-name = "agenthub"
+name = "asquink"
 version = "1.0.0"
-description = "AI Agent Terminal Hub"
+description = "A Squink, A Greedy Squink"
 authors = ["you"]
 edition = "2021"
 
@@ -9,8 +9,9 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2.0", features = [] }
 tauri-plugin-shell = "2"
+tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 portable-pty = "0.9"
@@ -20,11 +21,10 @@ uuid = { version = "1", features = ["v4"] }
 anyhow = "1"
 thiserror = "1"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite"] }
-russh = "0.49"
-russh-keys = "0.49"
+russh = "0.57.0"
 async-trait = "0.1"
-keyring = "3"
 chrono = { version = "0.4", features = ["serde"] }
+which = "6"
 
 [features]
 default = []

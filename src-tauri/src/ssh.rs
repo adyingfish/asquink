@@ -1,33 +1,37 @@
+use anyhow::{bail, Result};
 use async_trait::async_trait;
-use anyhow::{Result, Context, bail};
-use russh::{client, ChannelMsg, Disconnect};
-use russh_keys::key::PublicKey;
+use russh::{
+    client,
+    keys::{self, key::PrivateKeyWithHashAlg, HashAlg, PublicKey},
+    ChannelId, ChannelMsg, Disconnect,
+};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+use tauri::Emitter;
 use tokio::sync::{mpsc, Mutex, RwLock};
 
 use crate::session::{SessionStatus, TerminalSession};
 
 pub struct SshSession {
-    id: String,
     handle: Arc<Mutex<client::Handle<ClientHandler>>>,
-    channel_id: u32,
+    channel_id: ChannelId,
+    resize_tx: mpsc::UnboundedSender<(u16, u16)>,
     status: Arc<RwLock<SessionStatus>>,
-    data_sender: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-struct ClientHandler {
-    sender: mpsc::UnboundedSender<Vec<u8>>,
-}
+struct ClientHandler;
 
 impl client::Handler for ClientHandler {
     type Error = anyhow::Error;
 
-    async fn check_server_key(&mut self, _server_public_key: &PublicKey) -> Result<bool, Self::Error> {
-        // TODO: Implement host key verification
-        Ok(true)
+    fn check_server_key(
+        &mut self,
+        _server_public_key: &PublicKey,
+    ) -> impl std::future::Future<Output = Result<bool, Self::Error>> + Send {
+        async move {
+            // TODO: Implement host key verification
+            Ok(true)
+        }
     }
 }
 
@@ -38,94 +42,180 @@ impl SshSession {
         port: u16,
         username: &str,
         auth: SshAuth,
+        cols: u16,
+        rows: u16,
         app_handle: tauri::AppHandle,
     ) -> Result<Self> {
         let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
-        
-        // Create channel for terminal output
-        let (data_tx, mut data_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        
-        // Create SSH handler
-        let handler = ClientHandler {
-            sender: data_tx.clone(),
-        };
-        
-        // Connect to server
+
+        let handler = ClientHandler;
+
         let config = client::Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(300)),
             ..Default::default()
         };
         let config = Arc::new(config);
-        
+
         let mut handle = client::connect(config, addr, handler).await?;
-        
-        // Authenticate
+
         match auth {
             SshAuth::Password(password) => {
                 let auth_res = handle.authenticate_password(username, password).await?;
-                if !auth_res {
+                if !auth_res.success() {
                     bail!("Password authentication failed");
                 }
             }
             SshAuth::PrivateKey { path, passphrase } => {
-                let key_pair = if let Some(pass) = passphrase {
-                    russh_keys::load_secret_key(&path, Some(pass.as_bytes()))?
-                } else {
-                    russh_keys::load_secret_key(&path, None)?
-                };
-                let auth_res = handle.authenticate_publickey(username, Arc::new(key_pair)).await?;
-                if !auth_res {
-                    bail!("Key authentication failed");
+                let key_path = std::path::Path::new(&path);
+                if !key_path.exists() {
+                    bail!("Private key file not found: {}", path);
+                }
+
+                let key_data = std::fs::read(&path)
+                    .map_err(|e| anyhow::anyhow!("Failed to read private key file: {}", e))?;
+
+                let key_str = std::str::from_utf8(&key_data).map_err(|e| {
+                    anyhow::anyhow!("Private key is not valid UTF-8 PEM text: {}", e)
+                })?;
+
+                let key_header = key_str.lines().next().unwrap_or("");
+                eprintln!("Key header: {}", key_header);
+
+                let key_pair = keys::decode_secret_key(key_str, passphrase.as_deref())
+                    .map_err(|e| anyhow::anyhow!("Failed to parse private key: {}", e))?;
+
+                eprintln!("russh: Private key loaded successfully");
+                eprintln!("Private key loaded, authenticating as: {}", username);
+
+                let key_pair = Arc::new(key_pair);
+
+                // 对 RSA key 按顺序尝试:
+                // rsa-sha2-512 -> rsa-sha2-256 -> legacy ssh-rsa
+                let mut authed = false;
+
+                {
+                    let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha512));
+
+                    let auth_res =
+                        handle
+                            .authenticate_publickey(username, key)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("SSH authentication error (rsa-sha2-512): {}", e)
+                            })?;
+
+                    authed = auth_res.success();
+                    eprintln!("auth with rsa-sha2-512: {}", authed);
+                }
+
+                if !authed {
+                    let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha256));
+
+                    let auth_res =
+                        handle
+                            .authenticate_publickey(username, key)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("SSH authentication error (rsa-sha2-256): {}", e)
+                            })?;
+
+                    authed = auth_res.success();
+                    eprintln!("auth with rsa-sha2-256: {}", authed);
+                }
+
+                if !authed {
+                    let key = PrivateKeyWithHashAlg::new(key_pair.clone(), None);
+
+                    let auth_res =
+                        handle
+                            .authenticate_publickey(username, key)
+                            .await
+                            .map_err(|e| {
+                                anyhow::anyhow!("SSH authentication error (legacy ssh-rsa): {}", e)
+                            })?;
+
+                    authed = auth_res.success();
+                    eprintln!("auth with legacy ssh-rsa: {}", authed);
+                }
+
+                if !authed {
+                    bail!(
+                        "Key authentication failed - server rejected the key after trying rsa-sha2-512, rsa-sha2-256 and ssh-rsa."
+                    );
                 }
             }
         }
-        
-        // Open channel
+
         let mut channel = handle.channel_open_session().await?;
         let channel_id = channel.id();
-        
-        // Request PTY
-        channel.request_pty(true, "xterm-256color", 80, 24, 0, 0, &[]).await?;
-        
-        // Request shell
+
+        channel
+            .request_pty(
+                true,
+                "xterm-256color",
+                u32::from(cols),
+                u32::from(rows),
+                0,
+                0,
+                &[],
+            )
+            .await?;
+
         channel.request_shell(true).await?;
-        
+        let (resize_tx, mut resize_rx) = mpsc::unbounded_channel::<(u16, u16)>();
+
         let handle_arc = Arc::new(Mutex::new(handle));
-        let handle_clone = handle_arc.clone();
         let status = Arc::new(RwLock::new(SessionStatus::Connected));
         let status_clone = status.clone();
         let id_clone = id.clone();
-        
-        // Spawn task to read from channel and emit events
+
         tokio::spawn(async move {
-            let mut handle = handle_clone.lock().await;
+            let mut resize_rx_closed = false;
             loop {
-                match handle.wait().await {
-                    Some(ChannelMsg::Data { ref data, .. }) => {
-                        let data_vec = data.to_vec();
-                        // Emit to frontend via Tauri event
-                        let _ = app_handle.emit(&format!("terminal-data-{}", id_clone), data_vec);
+                tokio::select! {
+                    maybe_resize = resize_rx.recv(), if !resize_rx_closed => {
+                        match maybe_resize {
+                            Some((cols, rows)) => {
+                                if channel
+                                    .window_change(u32::from(cols), u32::from(rows), 0, 0)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            None => {
+                                resize_rx_closed = true;
+                            }
+                        }
                     }
-                    Some(ChannelMsg::ExitStatus { .. }) => {
-                        let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
-                        break;
+                    msg = channel.wait() => {
+                        match msg {
+                            Some(ChannelMsg::Data { ref data, .. }) => {
+                                let data_vec = data.to_vec();
+                                let _ = app_handle.emit(&format!("terminal-data-{}", id_clone), data_vec);
+                            }
+                            Some(ChannelMsg::ExitStatus { .. }) => {
+                                let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
+                                break;
+                            }
+                            None => {
+                                let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
+                                break;
+                            }
+                            _ => {}
+                        }
                     }
-                    None => {
-                        let _ = app_handle.emit(&format!("terminal-closed-{}", id_clone), ());
-                        break;
-                    }
-                    _ => {}
                 }
             }
             *status_clone.write().await = SessionStatus::Disconnected;
         });
-        
+
         Ok(Self {
-            id,
             handle: handle_arc,
             channel_id,
+            resize_tx,
             status,
-            data_sender: data_tx,
         })
     }
 }
@@ -133,29 +223,35 @@ impl SshSession {
 #[async_trait]
 impl TerminalSession for SshSession {
     async fn write(&self, data: &[u8]) -> Result<()> {
-        let mut handle = self.handle.lock().await;
-        handle.data(self.channel_id, data.into()).await?;
+        let handle = self.handle.lock().await;
+        handle
+            .data(self.channel_id, data.into())
+            .await
+            .map_err(|_| anyhow::anyhow!("Failed to write data"))?;
         Ok(())
     }
-    
+
     async fn resize(&self, cols: u16, rows: u16) -> Result<()> {
-        let mut handle = self.handle.lock().await;
-        handle.window_change(self.channel_id, cols, rows, 0, 0).await?;
+        self.resize_tx
+            .send((cols, rows))
+            .map_err(|_| anyhow::anyhow!("Failed to send SSH window resize"))?;
         Ok(())
     }
-    
+
     async fn close(&mut self) -> Result<()> {
-        let mut handle = self.handle.lock().await;
-        handle.disconnect(Disconnect::ByApplication, "", "").await?;
+        let handle = self.handle.lock().await;
+        handle
+            .disconnect(Disconnect::ByApplication, "", "")
+            .await
+            .map_err(|e| anyhow::anyhow!("Disconnect failed: {:?}", e))?;
         *self.status.write().await = SessionStatus::Disconnected;
         Ok(())
     }
-    
+
     fn status(&self) -> SessionStatus {
-        // This is a simplification - in production use proper async read
         SessionStatus::Connected
     }
-    
+
     fn session_type(&self) -> &'static str {
         "ssh"
     }
@@ -163,5 +259,104 @@ impl TerminalSession for SshSession {
 
 pub enum SshAuth {
     Password(String),
-    PrivateKey { path: String, passphrase: Option<String> },
+    PrivateKey {
+        path: String,
+        passphrase: Option<String>,
+    },
+}
+
+pub async fn exec_command(
+    host: &str,
+    port: u16,
+    username: &str,
+    auth: SshAuth,
+    command: &str,
+) -> Result<String> {
+    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+    let handler = ClientHandler;
+    let config = client::Config {
+        inactivity_timeout: Some(std::time::Duration::from_secs(300)),
+        ..Default::default()
+    };
+    let config = Arc::new(config);
+    let mut handle = client::connect(config, addr, handler).await?;
+
+    match auth {
+        SshAuth::Password(password) => {
+            let auth_res = handle.authenticate_password(username, password).await?;
+            if !auth_res.success() {
+                bail!("Password authentication failed");
+            }
+        }
+        SshAuth::PrivateKey { path, passphrase } => {
+            let key_path = std::path::Path::new(&path);
+            if !key_path.exists() {
+                bail!("Private key file not found: {}", path);
+            }
+
+            let key_data = std::fs::read(&path)
+                .map_err(|e| anyhow::anyhow!("Failed to read private key file: {}", e))?;
+            let key_str = std::str::from_utf8(&key_data)
+                .map_err(|e| anyhow::anyhow!("Private key is not valid UTF-8 PEM text: {}", e))?;
+            let key_pair = keys::decode_secret_key(key_str, passphrase.as_deref())
+                .map_err(|e| anyhow::anyhow!("Failed to parse private key: {}", e))?;
+            let key_pair = Arc::new(key_pair);
+
+            let mut authed = false;
+
+            {
+                let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha512));
+                let auth_res = handle
+                    .authenticate_publickey(username, key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("SSH authentication error (rsa-sha2-512): {}", e))?;
+                authed = auth_res.success();
+            }
+
+            if !authed {
+                let key = PrivateKeyWithHashAlg::new(key_pair.clone(), Some(HashAlg::Sha256));
+                let auth_res = handle
+                    .authenticate_publickey(username, key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("SSH authentication error (rsa-sha2-256): {}", e))?;
+                authed = auth_res.success();
+            }
+
+            if !authed {
+                let key = PrivateKeyWithHashAlg::new(key_pair.clone(), None);
+                let auth_res = handle
+                    .authenticate_publickey(username, key)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("SSH authentication error (legacy ssh-rsa): {}", e))?;
+                authed = auth_res.success();
+            }
+
+            if !authed {
+                bail!(
+                    "Key authentication failed - server rejected the key after trying rsa-sha2-512, rsa-sha2-256 and ssh-rsa."
+                );
+            }
+        }
+    }
+
+    let mut channel = handle.channel_open_session().await?;
+    channel.exec(true, command).await?;
+
+    let mut stdout: Vec<u8> = Vec::new();
+    loop {
+        match channel.wait().await {
+            Some(ChannelMsg::Data { data }) => {
+                stdout.extend_from_slice(data.as_ref());
+            }
+            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+            _ => {}
+        }
+    }
+
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "", "")
+        .await
+        .map_err(|e| anyhow::anyhow!("Disconnect failed: {:?}", e));
+
+    Ok(String::from_utf8_lossy(&stdout).to_string())
 }

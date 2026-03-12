@@ -1,229 +1,2007 @@
 import { useState, useEffect } from 'react'
-import { Monitor, Server, Plus, Settings } from 'lucide-react'
 import { invoke } from '@tauri-apps/api/core'
+import {
+  AppWindow,
+  Check,
+  ChevronRight,
+  Cloud,
+  Folder,
+  FolderOpen,
+  Laptop,
+  MessageSquareText,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Rocket,
+  Search,
+  Settings,
+  SunMoon,
+  SquareTerminal,
+  Trash2,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
+import type { Session, Env, Project, AgentInfo } from '../App'
+import { AGENTS, CHAT_AGENTS, PROJECT_AGENTS, getAcpRuntimeDefinition, getAgentDefinition, getAgentSessionMode, shouldAutoLaunchAgent } from '../utils/agents'
 
-interface SidebarProps {
-  onAddSession: (session: { id: string; name: string; type: 'local' | 'ssh' | 'wsl'; status: 'connecting' }) => void
-}
-
-interface ServerConfig {
+interface AcpAgentInfo {
   id: string
   name: string
-  host: string
-  port: number
-  username: string
-  auth_type: string
+  executable: string
+  status: 'ready' | 'handshaking' | 'starting' | 'error' | 'closed' | 'disconnected' | 'not_installed' | 'runtime_missing'
+  version?: string | null
+  pid?: number | null
+  protocolVersion?: string | null
+  lastError?: string | null
+  runtimeSupported: boolean
+  installHint?: string | null
+  installTarget: string
+  locationLabel: string
+  wslDistro?: string | null
 }
 
-export default function Sidebar({ onAddSession }: SidebarProps) {
-  const [activeSection, setActiveSection] = useState<'environments' | 'agents'>('environments')
-  const [servers, setServers] = useState<ServerConfig[]>([])
+const ACP_AGENT_SKELETON: AcpAgentInfo[] = [
+  { id: 'claude', name: 'Claude Code ACP', executable: 'claude', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+  { id: 'codex', name: 'Codex ACP', executable: 'codex', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+  { id: 'gemini', name: 'Gemini ACP', executable: 'gemini', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+  { id: 'opencode', name: 'OpenCode ACP', executable: 'opencode', status: 'disconnected', runtimeSupported: false, installTarget: 'windows', locationLabel: 'Windows 本机' },
+]
+
+const buildWslAcpSkeleton = (locationLabel: string, wslDistro: string): AcpAgentInfo[] =>
+  ACP_AGENT_SKELETON.map((agent) => ({
+    ...agent,
+    installTarget: 'wsl',
+    locationLabel,
+    wslDistro,
+  }))
+
+interface SidebarProps {
+  onAddSession: (session: Session) => void
+  onSessionStatusChange?: (id: string, status: Session['status']) => void
+  onSelectSession: (id: string) => void
+  activeSessionId: string | null
+  sessions: Session[]
+  onDeleteSession: (id: string) => void
+  onReconnectSession: (session: Session) => void
+  isLoading?: boolean
+  onOpenEnvManage?: () => void
+  themeMode?: 'dark' | 'light'
+  onToggleTheme?: () => void
+  refreshKey?: number
+  getPreferredPtySize: () => { cols: number; rows: number }
+}
+
+const getProjectNameFromPath = (value: string) => {
+  const normalized = value.trim().replace(/[\\/]+$/, '')
+  if (!normalized) return ''
+
+  const segments = normalized.split(/[\\/]/).filter(Boolean)
+  return segments[segments.length - 1] || normalized
+}
+
+const hasProjectContext = (session: Session) => Boolean(session.projectId || session.projectName || session.projectPath)
+
+const isPureTerminalSession = (session: Session) => !hasProjectContext(session) && !session.agentId
+
+const getSessionAgentDisplayName = (session: Session) => {
+  if (session.agentId === 'acp') {
+    return getAcpRuntimeDefinition(session.acpAgentId)?.name || 'ACP Agent'
+  }
+
+  return AGENTS.find((agent) => agent.id === session.agentId)?.name
+}
+
+type SessionIntent = 'project' | 'chat' | 'terminal'
+type NewSessionStep = 'intent' | 'project' | 'agent' | 'env'
+
+const getEnvIcon = (envType: Env['type']): LucideIcon => {
+  if (envType === 'local') return Laptop
+  if (envType === 'wsl') return AppWindow
+  return Cloud
+}
+
+const getIntentMeta = (intent: SessionIntent | null): { icon: LucideIcon; label: string } => {
+  if (intent === 'project') return { icon: Folder, label: '项目编码' }
+  if (intent === 'chat') return { icon: MessageSquareText, label: 'AI 对话' }
+  return { icon: SquareTerminal, label: '纯终端' }
+}
+
+function EnvTypeIcon({ env, size = 16, className = '' }: { env: Pick<Env, 'type'>; size?: number; className?: string }) {
+  const Icon = getEnvIcon(env.type)
+
+  return <Icon size={size} className={className} />
+}
+
+export default function Sidebar({
+  onAddSession,
+  onSessionStatusChange,
+  onSelectSession,
+  activeSessionId,
+  sessions,
+  onDeleteSession,
+  onReconnectSession,
+  isLoading,
+  onOpenEnvManage,
+  themeMode = 'dark',
+  onToggleTheme,
+  refreshKey,
+  getPreferredPtySize,
+}: SidebarProps) {
+  const [envs, setEnvs] = useState<Env[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
   const [showAddServer, setShowAddServer] = useState(false)
+  const [showNewSession, setShowNewSession] = useState(false)
   const [showPasswordPrompt, setShowPasswordPrompt] = useState<string | null>(null)
   const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [envStatuses, setEnvStatuses] = useState<Record<string, string>>({})
+  const [expandedEnvs, setExpandedEnvs] = useState<Set<string>>(new Set())
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sessionSettingsPanel, setSessionSettingsPanel] = useState<{ sessionId: string | null, x: number, y: number }>({ sessionId: null, x: 0, y: 0 })
 
-  // Load servers on mount
+  // Load environments and projects
   useEffect(() => {
-    loadServers()
-  }, [])
+    loadEnvs()
+    loadProjects()
+  }, [refreshKey])
 
-  const loadServers = async () => {
+  // Check environment statuses when envs change
+  useEffect(() => {
+    envs.forEach(env => checkEnvStatus(env.id))
+  }, [envs])
+
+  const loadEnvs = async () => {
     try {
-      const serverList = await invoke<ServerConfig[]>('list_servers')
-      setServers(serverList)
+      const envList = await invoke<Env[]>('list_envs')
+      setEnvs(envList)
+      // Initialize all environments as expanded
+      setExpandedEnvs(new Set(envList.map(e => e.id)))
     } catch (error) {
-      console.error('Failed to load servers:', error)
+      console.error('Failed to load environments:', error)
     }
   }
 
-  const createLocalSession = async () => {
-    const id = `local-${Date.now()}`
-    onAddSession({
-      id,
-      name: 'Local Terminal',
-      type: 'local',
-      status: 'connecting'
-    })
-    
+  const loadProjects = async () => {
     try {
-      await invoke('create_local_session', { shell: null })
+      const projectList = await invoke<Project[]>('list_projects')
+      setProjects(projectList)
     } catch (error) {
-      console.error('Failed to create local session:', error)
+      console.error('Failed to load projects:', error)
     }
   }
 
-  const createSshSession = async (server: ServerConfig) => {
-    if (server.auth_type === 'password') {
-      setShowPasswordPrompt(server.id)
+  const checkEnvStatus = async (envId: string) => {
+    try {
+      const status = await invoke<string>('check_env_status', { id: envId })
+      setEnvStatuses(prev => ({ ...prev, [envId]: status }))
+
+      // Show result message
+      if (status === 'online') {
+        setError('') // Clear any previous error
+      } else {
+        setError('连接失败: 无法连接到该环境')
+      }
+    } catch (error) {
+      console.error('Failed to check env status:', error)
+      setError('连接失败: ' + error)
+    }
+  }
+
+  const getEnvDetail = (env: Env) => {
+    if (env.type === 'local') return env.detail || 'Local Machine'
+    if (env.type === 'wsl') return env.wsl_distro || 'WSL'
+    if (env.host && env.username) return `${env.username}@${env.host}`
+    if (env.host) return env.host
+    return env.name
+  }
+
+  // 创建本地会话（带 Agent 和可选项目）
+  const createAcpSession = async (env: Env, acpAgentId: string | null, project?: Project) => {
+    if (!project?.path) {
+      setError('ACP 会话必须绑定项目工作目录')
       return
     }
-    
-    // For key auth, connect directly
-    await connectSsh(server.id, null)
-  }
+    if (!acpAgentId) {
+      setError('请选择具体的 ACP Agent')
+      return
+    }
 
-  const connectSsh = async (serverId: string, pwd: string | null) => {
-    const server = servers.find(s => s.id === serverId)
-    if (!server) return
+    const sessionId = `acp-${Date.now()}`
 
-    const sessionId = `ssh-${Date.now()}`
     onAddSession({
       id: sessionId,
-      name: server.name,
-      type: 'ssh',
-      status: 'connecting'
+      name: env.name,
+      type: env.type,
+      envId: env.id,
+      agentId: 'acp',
+      acpAgentId,
+      projectId: project.id,
+      projectName: project.name,
+      projectPath: project.path,
+      status: 'connecting',
+      mode: 'chat',
+      statusText: 'ACP handshaking...',
     })
 
     try {
-      await invoke('create_ssh_session', {
-        req: {
-          server_id: serverId,
-          password: pwd,
-        }
+      await invoke('create_acp_session', {
+        sessionId,
+        acpAgentId,
+        workingDir: project.path,
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          agentId: 'acp',
+          acpAgentId,
+          projectId: project.id,
+          workingDir: project.path,
+        },
       })
-      setShowPasswordPrompt(null)
-      setPassword('')
+      onSessionStatusChange?.(sessionId, 'connected')
     } catch (error) {
-      console.error('Failed to create SSH session:', error)
+      console.error('Failed to create ACP session:', error)
+      onSessionStatusChange?.(sessionId, 'disconnected')
+      setError('创建 ACP 会话失败: ' + error)
     }
   }
 
+  const createLocalSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
+    const id = `local-${Date.now()}`
+
+    console.log('Creating local session:', { id, envId: env.id, agentId, project })
+
+    onAddSession({
+      id,
+      name: env.name,
+      type: 'local',
+      envId: env.id,
+      agentId: agentId || undefined,
+      projectId: project?.id,
+      projectName: project?.name,
+      projectPath: project?.path,
+      status: 'connecting',
+      mode: getAgentSessionMode(agentId),
+      statusText: '连接中...',
+    })
+
+    try {
+      const { cols, rows } = getPreferredPtySize()
+      const sessionInfo = {
+        name: env.name,
+        envId: env.id,
+        agentId: agentId || null,
+        projectId: project?.id || null,
+        workingDir: project?.path || null,
+      }
+
+      console.log('Invoking create_local_session with:', { sessionId: id, workingDir: project?.path, sessionInfo })
+
+      await invoke('create_local_session', {
+        sessionId: id,
+        shell: null,
+        cols,
+        rows,
+        workingDir: project?.path || null,
+        sessionInfo,
+      })
+      onSessionStatusChange?.(id, 'connected')
+
+      // Auto-launch agent if selected
+      if (shouldAutoLaunchAgent(agentId)) {
+        // Wait a bit for terminal to be ready
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId: id,
+              sessionType: 'local',
+              agent: agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent:', err)
+          }
+        }, 500)
+      }
+    } catch (error) {
+      console.error('Failed to create local session:', error)
+      onSessionStatusChange?.(id, 'disconnected')
+      setError('Failed to create local session: ' + error)
+    }
+  }
+
+  // 创建 SSH 会话（带 Agent 和可选项目）
+  const createSshSessionWithAgent = async (env: Env, agentId: string | null, project?: Project, pwd?: string | null) => {
+    const sessionId = `ssh-${Date.now()}`
+
+    onAddSession({
+      id: sessionId,
+      name: env.name,
+      type: 'ssh',
+      envId: env.id,
+      agentId: agentId || undefined,
+      projectId: project?.id,
+      projectName: project?.name,
+      projectPath: project?.path,
+      status: 'connecting',
+      mode: getAgentSessionMode(agentId),
+      statusText: '连接中...',
+    })
+
+    try {
+      const { cols, rows } = getPreferredPtySize()
+      await invoke('create_ssh_session', {
+        sessionId,
+        cols,
+        rows,
+        req: {
+          serverId: env.id,
+          password: pwd,
+        },
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          agentId: agentId || null,
+          projectId: project?.id || null,
+          workingDir: project?.path || null,
+        }
+      })
+      onSessionStatusChange?.(sessionId, 'connected')
+      setShowPasswordPrompt(null)
+      setPassword('')
+
+      // Auto-launch agent if selected
+      if (shouldAutoLaunchAgent(agentId)) {
+        // Wait a bit for terminal to be ready
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId,
+              sessionType: 'ssh',
+              agent: agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent:', err)
+          }
+        }, 500)
+      }
+    } catch (error: any) {
+      console.error('Failed to create SSH session:', error)
+      onSessionStatusChange?.(sessionId, 'disconnected')
+      setError(`SSH connection failed: ${error}`)
+    }
+  }
+
+  // 创建 WSL 会话（带 Agent 和可选项目）
+  const createWslSessionWithAgent = async (env: Env, agentId: string | null, project?: Project) => {
+    const sessionId = `wsl-${Date.now()}`
+
+    onAddSession({
+      id: sessionId,
+      name: env.name,
+      type: 'wsl',
+      envId: env.id,
+      agentId: agentId || undefined,
+      projectId: project?.id,
+      projectName: project?.name,
+      projectPath: project?.path,
+      status: 'connecting',
+      mode: getAgentSessionMode(agentId),
+      statusText: '连接中...',
+    })
+
+    try {
+      const { cols, rows } = getPreferredPtySize()
+      await invoke('create_wsl_session', {
+        sessionId,
+        envId: env.id,
+        cols,
+        rows,
+        workingDir: project?.path || null,
+        sessionInfo: {
+          name: env.name,
+          envId: env.id,
+          agentId: agentId || null,
+          projectId: project?.id || null,
+          workingDir: project?.path || null,
+        }
+      })
+      onSessionStatusChange?.(sessionId, 'connected')
+
+      // Auto-launch agent if selected
+      if (shouldAutoLaunchAgent(agentId)) {
+        // Wait a bit for terminal to be ready
+        setTimeout(async () => {
+          try {
+            await invoke('launch_agent', {
+              sessionId,
+              sessionType: 'wsl',
+              agent: agentId,
+            })
+          } catch (err) {
+            console.error('Failed to launch agent:', err)
+          }
+        }, 500)
+      }
+    } catch (error: any) {
+      console.error('Failed to create WSL session:', error)
+      onSessionStatusChange?.(sessionId, 'disconnected')
+      setError(`WSL connection failed: ${error}`)
+    }
+  }
+
+  // 创建会话的主入口
+  const createSessionWithAgent = async (env: Env, agentId: string | null, project?: Project, acpAgentId?: string | null) => {
+    if (agentId === 'acp') {
+      await createAcpSession(env, acpAgentId || null, project)
+    } else if (env.type === 'local') {
+      await createLocalSessionWithAgent(env, agentId, project)
+    } else if (env.type === 'wsl') {
+      await createWslSessionWithAgent(env, agentId, project)
+    } else if (env.auth_type === 'password') {
+      // 需要密码，先保存选择，显示密码输入
+      setShowPasswordPrompt(env.id)
+      // 保存待创建的会话信息
+      sessionStorage.setItem('pending_session', JSON.stringify({ envId: env.id, agentId, project }))
+    } else {
+      await createSshSessionWithAgent(env, agentId, project, null)
+    }
+  }
+
+  const toggleEnvExpand = (envId: string) => {
+    setExpandedEnvs(prev => {
+      const next = new Set(prev)
+      if (next.has(envId)) {
+        next.delete(envId)
+      } else {
+        next.add(envId)
+      }
+      return next
+    })
+  }
+
+  const toggleProjectExpand = (projectKey: string) => {
+    setExpandedProjects(prev => {
+      const next = new Set(prev)
+      if (next.has(projectKey)) {
+        next.delete(projectKey)
+      } else {
+        next.add(projectKey)
+      }
+      return next
+    })
+  }
+
+  // Group sessions by environment
+  const sessionsByEnv = sessions.reduce((acc, session) => {
+    const envId = (session.envId && envs.find(e => e.id === session.envId))
+      ? session.envId
+      : 'unknown'
+    if (!acc[envId]) acc[envId] = []
+    acc[envId].push(session)
+    return acc
+  }, {} as Record<string, Session[]>)
+
+  // Filter by search query
+  const filteredEnvs = envs.filter(env => {
+    if (!searchQuery) return true
+    const query = searchQuery.toLowerCase()
+    const envMatch = env.name.toLowerCase().includes(query) ||
+                     (env.detail?.toLowerCase().includes(query)) ||
+                     (env.host?.toLowerCase().includes(query))
+    const envSessions = sessionsByEnv[env.id] || []
+    const sessionMatch = envSessions.some(s =>
+      s.projectName?.toLowerCase().includes(query) ||
+      s.lastMsg?.toLowerCase().includes(query) ||
+      getSessionAgentDisplayName(s)?.toLowerCase().includes(query)
+    )
+    const envProjects = projects.filter(p => p.env_id === env.id)
+    const projectMatch = envProjects.some(p =>
+      p.name.toLowerCase().includes(query) ||
+      p.path.toLowerCase().includes(query)
+    )
+    return envMatch || sessionMatch || projectMatch
+  }).sort((a, b) => {
+    // 1. Local environment always first
+    if (a.type === 'local') return -1
+    if (b.type === 'local') return 1
+
+    // 2. Environment with connecting sessions comes first
+    const aSessions = sessionsByEnv[a.id] || []
+    const bSessions = sessionsByEnv[b.id] || []
+    const aHasConnecting = aSessions.some(s => s.status === 'connecting' || s.status === 'connected')
+    const bHasConnecting = bSessions.some(s => s.status === 'connecting' || s.status === 'connected')
+
+    if (aHasConnecting && !bHasConnecting) return -1
+    if (!aHasConnecting && bHasConnecting) return 1
+
+    // 3. Keep original order
+    return 0
+  })
+
   return (
-    <div className="w-56 bg-dark-800 border-r border-dark-600 flex flex-col">
-      {/* Header */}
-      <div className="p-4 border-b border-dark-600">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-            <span className="text-white font-bold">A</span>
+    <div
+      className="w-[260px] bg-[#0e1015] border-r border-[#1d2030] flex flex-col flex-shrink-0 relative"
+      onClick={() => setSessionSettingsPanel({ sessionId: null, x: 0, y: 0 })}
+    >
+      <div className="px-3.5 py-3 border-b border-[#1d2030]">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6D28D9] shadow-[0_8px_24px_rgba(139,92,246,0.24)] flex items-center justify-center text-white text-sm font-semibold">
+            AQ
           </div>
-          <span className="font-semibold text-lg">AgentHub</span>
+          <div className="flex-1 min-w-0">
+            <div className="text-[15px] font-semibold text-[#f5f7fb]">ASquink</div>
+          </div>
+          <button
+            onClick={() => setShowNewSession(true)}
+            className="w-8 h-8 rounded-lg border border-[#282d3e] bg-[#151820] text-[#8b8fa7] hover:text-[#f5f7fb] hover:border-[#3a3f57] hover:bg-[#1b1f2b] transition-colors flex items-center justify-center"
+            aria-label="New session"
+          >
+            <Plus size={15} />
+          </button>
         </div>
-        
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveSection('environments')}
-            className={`flex-1 py-1.5 px-2 text-sm rounded transition-colors ${
-              activeSection === 'environments' 
-                ? 'bg-dark-600 text-blue-400' 
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Server size={14} className="inline mr-1" />
-            环境
-          </button>
-          <button
-            onClick={() => setActiveSection('agents')}
-            className={`flex-1 py-1.5 px-2 text-sm rounded transition-colors ${
-              activeSection === 'agents' 
-                ? 'bg-dark-600 text-blue-400' 
-                : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            <Monitor size={14} className="inline mr-1" />
-            Agent
-          </button>
+
+        <div className="mt-3 flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-[#151820] border border-[#1d2030]">
+          <Search size={13} className="text-[#4e5270]" />
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索会话 / 项目 / 环境..."
+            className="flex-1 bg-transparent border-none outline-none text-[#e2e4ed] text-xs placeholder-[#4e5270]"
+          />
         </div>
       </div>
 
-      {/* Content */}
+      {/* Error message */}
+      {error && (
+        <div className="mx-2.5 mt-1 p-2 bg-red-600/20 border border-red-600/50 rounded text-xs text-red-400 flex items-center gap-2">
+          ⚠️ {error}
+          <button onClick={() => setError('')} className="ml-auto text-red-400 hover:text-red-300">×</button>
+        </div>
+      )}
+
+      {/* Tree */}
       <div className="flex-1 overflow-y-auto p-2">
-        {activeSection === 'environments' ? (
-          <>
-            {/* Quick Actions */}
-            <div className="mb-4">
-              <div className="text-xs text-gray-500 uppercase font-semibold mb-2 px-2">快速连接</div>
-              <button
-                onClick={createLocalSession}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-gray-300 hover:bg-dark-700 transition-colors"
-              >
-                <Plus size={16} className="text-green-400" />
-                本地终端
-              </button>
-            </div>
-
-            {/* Servers */}
-            <div>
-              <div className="flex items-center justify-between px-2 mb-2">
-                <span className="text-xs text-gray-500 uppercase font-semibold">服务器</span>
-                <button 
-                  onClick={() => setShowAddServer(true)}
-                  className="text-gray-500 hover:text-gray-300"
-                >
-                  <Plus size={14} />
-                </button>
-              </div>
-              
-              {servers.map(server => (
-                <button
-                  key={server.id}
-                  onClick={() => createSshSession(server)}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-gray-300 hover:bg-dark-700 transition-colors mb-1"
-                >
-                  <Server size={16} className="text-blue-400" />
-                  <div className="flex-1 min-w-0">
-                    <div className="truncate">{server.name}</div>
-                    <div className="text-xs text-gray-500 truncate">{server.username}@{server.host}</div>
-                  </div>
-                </button>
-              ))}
-
-              {servers.length === 0 && (
-                <div className="text-xs text-gray-500 px-3 py-2">
-                  暂无服务器配置
-                </div>
-              )}
-            </div>
-          </>
+        {isLoading ? (
+          <div className="text-xs text-[#4e5270] p-4 text-center">加载中...</div>
         ) : (
-          <div className="text-center text-gray-500 py-8">
-            <Monitor size={32} className="mx-auto mb-2 opacity-50" />
-            <div className="text-sm">Agent 功能</div>
-            <div className="text-xs mt-1">Phase 2 开发中</div>
+          filteredEnvs.map(env => {
+            const online = (envStatuses[env.id] || env.status) === 'online'
+            const isOpen = expandedEnvs.has(env.id) && online
+            const envSessions = sessionsByEnv[env.id] || []
+
+            // Group sessions by project
+            const projectGroups: Record<string, Session[]> = {}
+            const standalone: Session[] = []
+            envSessions.forEach(s => {
+              if (hasProjectContext(s) && s.projectPath) {
+                const key = s.projectId ? `${env.id}:${s.projectId}` : `${env.id}:${s.projectPath}`
+                if (!projectGroups[key]) projectGroups[key] = []
+                projectGroups[key].push(s)
+              } else {
+                standalone.push(s)
+              }
+            })
+
+            const projectKeys = Object.keys(projectGroups)
+            const totalSessions = envSessions.length
+
+            return (
+              <div key={env.id} className="mb-0.5">
+                {/* Environment header */}
+                <div
+                  onClick={() => online && toggleEnvExpand(env.id)}
+                  className="flex items-center gap-2 px-2.5 py-1.75 rounded-lg cursor-pointer transition-colors"
+                  style={{ opacity: online ? 1 : 0.38 }}
+                  onMouseEnter={(e) => {
+                    if (online) e.currentTarget.style.background = 'var(--panel-bg-hover)'
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'transparent'
+                  }}
+                >
+                  <span
+                    className="text-[9px] text-[#4e5270] w-3 text-center transition-transform duration-150"
+                    style={{ transform: isOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+                  >
+                    ▼
+                  </span>
+                  <EnvTypeIcon env={env} size={16} className="text-[#8b8fa7] shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[12.5px] font-medium text-[#e2e4ed]">{env.name}</div>
+                    <div className="text-[10px] text-[#4e5270] font-mono truncate">{getEnvDetail(env)}</div>
+                  </div>
+                  {totalSessions > 0 && (
+                    <span className="text-[9px] font-mono bg-[#1b1f2b] text-[#4e5270] px-1.5 py-0.5 rounded">
+                      {totalSessions}
+                    </span>
+                  )}
+                  <div
+                    className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+                    style={{
+                      background: online ? '#4ADE80' : '#4e5270',
+                      boxShadow: online ? '0 0 6px #4ADE80' : 'none',
+                    }}
+                  />
+                </div>
+
+                {/* Offline: reconnect hint */}
+                {!online && (
+                  <div className="pl-10 mb-1">
+                    <span
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        checkEnvStatus(env.id)
+                      }}
+                      className="text-[10px] text-[#4e5270] cursor-pointer px-2 py-1 rounded hover:bg-[#222738]"
+                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
+                    >
+                      ↻ 重新连接
+                    </span>
+                  </div>
+                )}
+
+                {/* Expanded content */}
+                {isOpen && (
+                  <div className="pl-3.5 mt-0.5">
+                    {/* Project groups */}
+                    {projectKeys.map(pk => {
+                      const projSessions = projectGroups[pk]
+                      const pOpen = expandedProjects.has(pk) !== false // default open
+                      const hasMultiple = projSessions.length > 1
+                      const hasActive = projSessions.some(s => s.status === 'connected')
+
+                      // Single session: show inline
+                      if (!hasMultiple) {
+                        const s = projSessions[0]
+                        const isAct = activeSessionId === s.id
+                        const agent = AGENTS.find(a => a.id === s.agentId)
+                        const isDisconnected = s.status === 'disconnected'
+
+                        return (
+                          <div
+                            key={pk}
+                            onClick={() => !isDisconnected && onSelectSession(s.id)}
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              setSessionSettingsPanel({
+                                sessionId: s.id,
+                                x: e.clientX,
+                                y: e.clientY,
+                              })
+                            }}
+                            className="flex items-center gap-1.75 px-2 py-1.5 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
+                            style={{
+                              background: isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+                              borderLeft: isAct && !isDisconnected ? '2.5px solid #8B5CF6' : '2.5px solid transparent',
+                              opacity: isDisconnected ? 0.5 : 1,
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isAct || isDisconnected) e.currentTarget.style.background = 'var(--panel-bg-hover)'
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent'
+                            }}
+                          >
+                            <Folder size={12} className="text-[#4e5270] shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[12px] font-medium font-mono truncate">{s.projectName || s.name}</div>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <span className="text-[10px] font-medium" style={{ color: agent?.color || '#4e5270' }}>
+                                  {agent?.short || 'Agent'}
+                                </span>
+                                <span className="text-[10px] text-[#4e5270] font-mono truncate">
+                                  {s.projectPath}
+                                </span>
+                              </div>
+                            </div>
+                            <SessionBadge s={s} />
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const rect = e.currentTarget.getBoundingClientRect()
+                                setSessionSettingsPanel({
+                                  sessionId: s.id,
+                                  x: rect.right,
+                                  y: rect.bottom,
+                                })
+                              }}
+                              className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#f5f7fb] opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label="Session settings"
+                            >
+                              <MoreHorizontal size={14} />
+                            </button>
+                          </div>
+                        )
+                      }
+
+                      // Multi-session project: collapsible
+                      return (
+                        <div key={pk} className="mb-0.5">
+                          <div
+                            onClick={() => toggleProjectExpand(pk)}
+                            className="flex items-center gap-1.5 px-2 py-2 rounded-md cursor-pointer"
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--panel-bg-hover)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                          >
+                            <span
+                              className="text-[8px] text-[#4e5270] w-2.5 text-center transition-transform duration-150"
+                              style={{ transform: pOpen ? 'rotate(90deg)' : 'none' }}
+                            >
+                              ▶
+                            </span>
+                            <Folder size={12} className="text-[#4e5270] shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[12px] font-medium font-mono truncate">
+                                {projSessions[0]?.projectName || projSessions[0]?.name}
+                              </div>
+                              <div className="text-[10px] text-[#4e5270] truncate">
+                                {projSessions[0]?.projectPath}
+                              </div>
+                            </div>
+                            {hasActive && (
+                              <div
+                                className="w-[5px] h-[5px] rounded-full"
+                                style={{
+                                  background: '#4ADE80',
+                                  boxShadow: '0 0 5px rgba(74, 222, 128, 0.53)',
+                                  animation: 'pulse 2s ease infinite',
+                                }}
+                              />
+                            )}
+                            <span className="text-[9px] font-mono text-[#4e5270] bg-[#1b1f2b] px-1.5 py-0.5 rounded">
+                              {projSessions.length}
+                            </span>
+                          </div>
+
+                          {pOpen && (
+                            <div className="pl-5">
+                              {projSessions.map(s => {
+                                const isAct = activeSessionId === s.id
+                                const agent = AGENTS.find(a => a.id === s.agentId)
+                                const isDisconnected = s.status === 'disconnected'
+
+                                return (
+                                  <div
+                                    key={s.id}
+                                    onClick={() => !isDisconnected && onSelectSession(s.id)}
+                                    onContextMenu={(e) => {
+                                      e.preventDefault()
+                                      setSessionSettingsPanel({
+                                        sessionId: s.id,
+                                        x: e.clientX,
+                                        y: e.clientY,
+                                      })
+                                    }}
+                                    className="flex items-center gap-1.75 px-2 py-1.25 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
+                                    style={{
+                                      background: isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+                                      borderLeft: isAct && !isDisconnected ? '2.5px solid #8B5CF6' : '2.5px solid transparent',
+                                      opacity: isDisconnected ? 0.5 : 1,
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!isAct || isDisconnected) e.currentTarget.style.background = 'var(--panel-bg-hover)'
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent'
+                                    }}
+                                  >
+                                    <div
+                                      className="w-[7px] h-[7px] rounded-full flex-shrink-0"
+                                      style={{ background: agent?.color || '#4e5270' }}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-[11.5px] font-medium">{agent?.short || 'Agent'}</div>
+                                      {s.lastMsg && (
+                                        <div className="text-[10px] text-[#4e5270] truncate">{s.lastMsg}</div>
+                                      )}
+                                    </div>
+                                    <SessionBadge s={s} />
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        const rect = e.currentTarget.getBoundingClientRect()
+                                        setSessionSettingsPanel({
+                                          sessionId: s.id,
+                                          x: rect.right,
+                                          y: rect.bottom,
+                                        })
+                                      }}
+                                      className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#f5f7fb] opacity-0 group-hover:opacity-100 transition-opacity"
+                                      aria-label="Session settings"
+                                    >
+                                      <MoreHorizontal size={14} />
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                              <div
+                                className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-[#4e5270] cursor-pointer rounded-md"
+                                onClick={() => setShowNewSession(true)}
+                                onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+                                onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
+                              >
+                                <Plus size={12} /> 添加 Agent
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+
+                    {/* Standalone sessions (no project) */}
+                    {standalone.length > 0 && projectKeys.length > 0 && (
+                      <div className="h-px bg-[#1d2030] my-1.5 mx-2" />
+                    )}
+                    {standalone.map(s => {
+                      const isAct = activeSessionId === s.id
+                      const agent = AGENTS.find(a => a.id === s.agentId)
+                      const isDisconnected = s.status === 'disconnected'
+                      const isPureTerminal = isPureTerminalSession(s)
+
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => !isDisconnected && onSelectSession(s.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            setSessionSettingsPanel({
+                              sessionId: s.id,
+                              x: e.clientX,
+                              y: e.clientY,
+                            })
+                          }}
+                          className="flex items-center gap-1.75 px-2 py-1.5 rounded-md mb-0.5 cursor-pointer transition-colors group relative"
+                          style={{
+                            background: isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent',
+                            borderLeft: isAct && !isDisconnected ? '2.5px solid #8B5CF6' : '2.5px solid transparent',
+                            opacity: isDisconnected ? 0.5 : 1,
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isAct || isDisconnected) e.currentTarget.style.background = 'var(--panel-bg-hover)'
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = isAct && !isDisconnected ? 'rgba(139, 92, 246, 0.12)' : 'transparent'
+                          }}
+                        >
+                          {isPureTerminal ? (
+                            <SquareTerminal size={12} className="shrink-0 text-[#8b8fa7]" />
+                          ) : (
+                            <MessageSquareText size={12} className="shrink-0 text-[#8b8fa7]" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[12px] font-medium truncate">
+                              {s.lastMsg || agent?.name || s.name}
+                            </div>
+                            <div className="text-[10px] font-medium mt-0.5" style={{ color: agent?.color || '#4e5270' }}>
+                              {agent?.short || (isPureTerminal ? 'Terminal' : 'Agent')}
+                            </div>
+                          </div>
+                          <SessionBadge s={s} />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setSessionSettingsPanel({
+                                sessionId: s.id,
+                                x: rect.right,
+                                y: rect.bottom,
+                              })
+                            }}
+                            className="p-1 hover:bg-[#1e2130] rounded text-[#4e5270] hover:text-[#f5f7fb] opacity-0 group-hover:opacity-100 transition-opacity"
+                            aria-label="Session settings"
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                        </div>
+                      )
+                    })}
+
+                    {/* New session in env */}
+                    <div
+                      className="flex items-center gap-1.5 px-2 py-1.25 text-[11px] text-[#4e5270] cursor-pointer rounded-md mt-0.5"
+                      onClick={() => setShowNewSession(true)}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = 'var(--accent)'
+                        e.currentTarget.style.background = 'rgba(139, 92, 246, 0.08)'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = 'var(--text-tertiary)'
+                        e.currentTarget.style.background = 'transparent'
+                      }}
+                    >
+                      <Plus size={12} /> 新建会话
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })
+        )}
+
+        {/* Empty state */}
+        {filteredEnvs.length === 0 && !isLoading && (
+          <div className="text-xs text-[#4e5270] p-4 text-center">
+            {searchQuery ? '未找到匹配结果' : '暂无环境，请添加新环境'}
           </div>
         )}
       </div>
 
-      {/* Footer */}
-      <div className="p-2 border-t border-dark-600">
-        <button className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm text-gray-400 hover:bg-dark-700 transition-colors">
-          <Settings size={16} />
-          设置
-        </button>
+      {/* Bottom bar */}
+      <div className="px-[14px] py-2 border-t border-[#1d2030] flex items-center gap-2.5">
+        <span
+          className="text-[11px] text-[#4e5270] cursor-pointer"
+          onClick={onOpenEnvManage}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
+        >
+          <span className="inline-flex items-center gap-1">
+            <Settings size={12} />
+            管理
+          </span>
+        </span>
+        <span
+          className="text-[11px] text-[#4e5270] cursor-pointer"
+          onClick={onToggleTheme}
+          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent)'}
+          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-tertiary)'}
+          title={themeMode === 'dark' ? '切换到浅色模式' : '切换到深色模式'}
+        >
+          <span className="inline-flex items-center gap-1">
+            <SunMoon size={12} />
+            {themeMode === 'dark' ? '浅色' : '深色'}
+          </span>
+        </span>
+        <div className="flex-1" />
+        <div className="flex gap-2">
+          <div className="flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#FBBF24]" />
+            <span className="text-[9px] text-[#4e5270]">PTY</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-1.5 h-1.5 rounded-full bg-[#4ADE80]" />
+            <span className="text-[9px] text-[#4e5270]">ACP</span>
+          </div>
+        </div>
       </div>
 
-      {/* Password Prompt Modal */}
+      {/* Modals */}
+      {showAddServer && (
+        <AddEnvModal
+          onClose={() => setShowAddServer(false)}
+          onCreated={() => {
+            setShowAddServer(false)
+            loadEnvs()
+          }}
+        />
+      )}
+
+      {showNewSession && (
+        <NewSessionModal
+          envs={envs}
+          projects={projects}
+          onClose={() => setShowNewSession(false)}
+          onCreateSession={(env, agentId, project, acpAgentId) => {
+            createSessionWithAgent(env, agentId, project, acpAgentId)
+            setShowNewSession(false)
+          }}
+          onCreateSshSession={(env, agentId, project, password) => {
+            createSshSessionWithAgent(env, agentId, project, password)
+            setShowNewSession(false)
+          }}
+        />
+      )}
+
       {showPasswordPrompt && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-dark-800 rounded-lg p-4 w-80">
-            <h3 className="text-lg font-semibold mb-3">输入密码</h3>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="SSH 密码"
-              className="w-full px-3 py-2 bg-dark-700 rounded border border-dark-600 text-white placeholder-gray-500 mb-3"
-              onKeyDown={(e) => e.key === 'Enter' && connectSsh(showPasswordPrompt, password)}
-            />
-            <div className="flex gap-2">
+        <PasswordPromptModal
+          envId={showPasswordPrompt}
+          envs={envs}
+          password={password}
+          setPassword={setPassword}
+          onClose={() => {
+            setShowPasswordPrompt(null)
+            setPassword('')
+            sessionStorage.removeItem('pending_session')
+          }}
+          onSubmit={() => {
+            const env = envs.find(e => e.id === showPasswordPrompt)
+            const pending = sessionStorage.getItem('pending_session')
+            if (env && pending) {
+              const { agentId, project } = JSON.parse(pending)
+              createSshSessionWithAgent(env, agentId, project, password)
+              sessionStorage.removeItem('pending_session')
+            }
+          }}
+        />
+      )}
+
+      {/* Session settings panel */}
+      {sessionSettingsPanel.sessionId && (() => {
+        const session = sessions.find(s => s.id === sessionSettingsPanel.sessionId)
+        if (!session) return null
+
+        return (
+          <div
+            className="fixed z-50 bg-[#1e2130] border border-[#2d3346] rounded-lg shadow-xl py-1 min-w-[140px]"
+            style={{
+              left: Math.min(sessionSettingsPanel.x, window.innerWidth - 160),
+              top: Math.min(sessionSettingsPanel.y, window.innerHeight - 100),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {session.status === 'disconnected' && (
               <button
                 onClick={() => {
-                  setShowPasswordPrompt(null)
-                  setPassword('')
+                  onReconnectSession(session)
+                  setSessionSettingsPanel({ sessionId: null, x: 0, y: 0 })
                 }}
-                className="flex-1 px-3 py-2 bg-dark-700 rounded text-sm hover:bg-dark-600"
+                className="w-full px-3 py-1.5 text-left text-[12px] text-[#e2e4ed] hover:bg-[#2a2e40] flex items-center gap-2"
               >
-                取消
+                <RefreshCw size={12} className="text-[#4ADE80]" />
+                重连
+              </button>
+            )}
+            <button
+              onClick={() => {
+                onDeleteSession(session.id)
+                setSessionSettingsPanel({ sessionId: null, x: 0, y: 0 })
+              }}
+              className="w-full px-3 py-1.5 text-left text-[12px] text-[#e2e4ed] hover:bg-[#2a2e40] flex items-center gap-2"
+            >
+              <Trash2 size={12} className="text-red-400" />
+              删除
+            </button>
+          </div>
+        )
+      })()}
+    </div>
+  )
+}
+
+// Session badge component
+function SessionBadge({ s }: { s: Session }) {
+  const isTerm = !hasProjectContext(s) && !s.agentId
+  const isAcp = s.agentId === 'acp'
+  const acpLabel = getAcpRuntimeDefinition(s.acpAgentId)?.short || 'ACP'
+  const label = isTerm ? 'PTY' : (isAcp ? acpLabel : (s.mode === 'chat' ? 'CHAT' : 'AGENT'))
+  const color = isTerm ? '#FBBF24' : (isAcp ? '#4ADE80' : (s.mode === 'chat' ? '#C084FC' : '#60A5FA'))
+  const background = isTerm
+    ? 'rgba(251, 191, 36, 0.08)'
+    : (isAcp ? 'rgba(74, 222, 128, 0.08)' : (s.mode === 'chat' ? 'rgba(192, 132, 252, 0.08)' : 'rgba(96, 165, 250, 0.08)'))
+
+  return (
+    <div className="flex flex-col items-end justify-center gap-1 flex-shrink-0 min-h-[34px]">
+      <span
+        className="h-5 px-1.5 rounded-md text-[8.5px] font-semibold tracking-[0.08em] inline-flex items-center"
+        style={{
+          background,
+          color,
+        }}
+      >
+        {label}
+      </span>
+      <span className="text-[9px] min-h-[12px]">
+        {s.status === 'connected' && s.statusText && (
+          <span className="text-[#4ADE80] font-medium">{s.statusText}</span>
+        )}
+      </span>
+    </div>
+  )
+}
+
+// Password Prompt Modal
+function PasswordPromptModal({
+  envId: _envId,
+  envs: _envs,
+  password,
+  setPassword,
+  onClose,
+  onSubmit,
+}: {
+  envId: string
+  envs: Env[]
+  password: string
+  setPassword: (p: string) => void
+  onClose: () => void
+  onSubmit: () => void
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-[#0f1117] rounded-lg p-4 w-80 border border-[#1e2130]">
+        <h3 className="text-lg font-semibold mb-3">输入 SSH 密码</h3>
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="SSH password"
+          className="w-full px-3 py-2 bg-[#161822] rounded border border-[#1e2130] text-white placeholder-[#555872] mb-3 text-sm"
+          onKeyDown={(e) => { if (e.key === 'Enter') onSubmit() }}
+        />
+        <div className="flex gap-2">
+          <button onClick={onClose} className="flex-1 px-3 py-2 bg-[#161822] rounded text-sm hover:bg-[#1e2130]">
+            取消
+          </button>
+          <button onClick={onSubmit} className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500">
+            连接
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Add Environment Modal
+function AddEnvModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+  const [name, setName] = useState('')
+  const [host, setHost] = useState('')
+  const [port, setPort] = useState('22')
+  const [username, setUsername] = useState('')
+  const [authType, setAuthType] = useState<'password' | 'key'>('key')
+  const [privateKeyPath, setPrivateKeyPath] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSubmit = async () => {
+    if (!name || !host || !username) {
+      setError('请填写所有必填字段')
+      return
+    }
+    setLoading(true)
+    setError('')
+    try {
+      await invoke('create_env', {
+        req: {
+          name,
+          type: 'ssh',
+          host,
+          port: parseInt(port) || 22,
+          username,
+          auth_type: authType,
+          private_key_path: privateKeyPath || null,
+          icon: 'cloud',
+        }
+      })
+      onCreated()
+    } catch (err: any) {
+      setError(err.toString())
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/55 flex items-center justify-center z-50 backdrop-blur-sm">
+      <div className="bg-[#1b1f2b] rounded-2xl w-[420px] border border-[#282d3e] overflow-hidden shadow-2xl">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-[#1d2030]">
+          <div className="text-base font-semibold flex items-center gap-2">
+            <Cloud size={16} />
+            添加 SSH 环境
+          </div>
+          <div className="text-xs text-[#4e5270] mt-1">配置远程服务器连接</div>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-3">
+          {error && (
+            <div className="p-2.5 bg-[#F87171]/10 border border-[#F87171]/30 rounded-lg text-xs text-[#F87171]">
+              {error}
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs text-[#8b8fa7] mb-1.5">环境名称 *</label>
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例如：生产服务器"
+              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
+            />
+          </div>
+
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs text-[#8b8fa7] mb-1.5">主机地址 *</label>
+              <input
+                value={host}
+                onChange={(e) => setHost(e.target.value)}
+                placeholder="192.168.1.100"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
+              />
+            </div>
+            <div className="w-20">
+              <label className="block text-xs text-[#8b8fa7] mb-1.5">端口</label>
+              <input
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                placeholder="22"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-[#8b8fa7] mb-1.5">用户名 *</label>
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="root"
+              className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm outline-none focus:border-[#8B5CF6]"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-[#8b8fa7] mb-1.5">认证方式</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setAuthType('key')}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  authType === 'key'
+                    ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 text-[#8B5CF6]'
+                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#8B5CF6]/50'
+                }`}
+              >
+                🔑 密钥
               </button>
               <button
-                onClick={() => connectSsh(showPasswordPrompt, password)}
-                className="flex-1 px-3 py-2 bg-blue-600 rounded text-sm hover:bg-blue-500"
+                onClick={() => setAuthType('password')}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  authType === 'password'
+                    ? 'bg-[#8B5CF6]/20 border border-[#8B5CF6]/50 text-[#8B5CF6]'
+                    : 'bg-[#151820] border border-[#282d3e] text-[#8b8fa7] hover:border-[#8B5CF6]/50'
+                }`}
               >
-                连接
+                🔐 密码
               </button>
             </div>
           </div>
+
+          {authType === 'key' && (
+            <div>
+              <label className="block text-xs text-[#8b8fa7] mb-1.5">私钥路径</label>
+              <input
+                value={privateKeyPath}
+                onChange={(e) => setPrivateKeyPath(e.target.value)}
+                placeholder="~/.ssh/id_rsa"
+                className="w-full px-3.5 py-2.5 bg-[#151820] rounded-lg border border-[#282d3e] text-[#e2e4ed] placeholder-[#4e5270] text-sm font-mono outline-none focus:border-[#8B5CF6]"
+              />
+              <div className="text-[10px] text-[#4e5270] mt-1.5">留空则使用默认密钥 (~/.ssh/id_rsa)</div>
+            </div>
+          )}
+
+          {authType === 'password' && (
+            <div className="p-3 bg-[#FBBF24]/10 border border-[#FBBF24]/30 rounded-lg">
+              <div className="text-xs text-[#FBBF24] font-medium">⚠️ 密码认证说明</div>
+              <div className="text-[11px] text-[#8b8fa7] mt-1">
+                选择密码认证时，每次建立连接都需要输入密码。建议使用密钥认证以获得更好的体验。
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-[#1d2030] flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-sm font-medium hover:bg-[#222738] transition-colors"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="flex-1 py-2.5 rounded-lg bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] text-white text-sm font-semibold disabled:opacity-50 transition-colors"
+          >
+            {loading ? '添加中...' : '添加环境'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// New Session Modal - Multi-step wizard
+function NewSessionModal({
+  envs,
+  projects,
+  onClose,
+  onCreateSession,
+  onCreateSshSession: _onCreateSshSession,
+}: {
+  envs: Env[]
+  projects: Project[]
+  onClose: () => void
+  onCreateSession: (env: Env, agentId: string | null, project?: Project, acpAgentId?: string | null) => void
+  onCreateSshSession: (env: Env, agentId: string | null, project?: Project, password?: string) => void
+}) {
+  const [step, setStep] = useState<NewSessionStep>('intent')
+  const [intent, setIntent] = useState<SessionIntent | null>(null)
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null)
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
+  const [selectedAcpAgentId, setSelectedAcpAgentId] = useState<string | null>(null)
+  const [selectedEnv, setSelectedEnv] = useState<Env | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [browseEnv, setBrowseEnv] = useState<Env | null>(null)
+  const [browseDir, setBrowseDir] = useState('')
+  const [browseProjectName, setBrowseProjectName] = useState('')
+  const [detectedAgents, setDetectedAgents] = useState<AgentInfo[] | null>(null)
+  const [acpAgents, setAcpAgents] = useState<AcpAgentInfo[] | null>(null)
+  const [scanningAgents, setScanningAgents] = useState(false)
+  const [acpNotice, setAcpNotice] = useState<string | null>(null)
+
+  const scanAgents = async () => {
+    setScanningAgents(true)
+    try {
+      let acpPromise: Promise<AcpAgentInfo[]>
+      if (selectedEnv?.type === 'wsl') {
+        const acpWslEnvId = await invoke<string | null>('get_acp_wsl_env_id')
+
+        if (!acpWslEnvId) {
+          setAcpNotice('WSL ACP 未配置。请先在 ACP Agent 管理页选择一个 WSL 环境。')
+          acpPromise = Promise.resolve([])
+        } else if (acpWslEnvId !== selectedEnv.id) {
+          setAcpNotice(`WSL ACP 当前绑定到其他环境。请在 ACP Agent 管理页切换到 ${selectedEnv.name} 后再使用。`)
+          acpPromise = Promise.resolve([])
+        } else {
+          setAcpNotice(`ACP 将在 ${selectedEnv.name}${selectedEnv.wsl_distro ? ` (${selectedEnv.wsl_distro})` : ''} 中启动。`)
+          if (selectedEnv.wsl_distro) {
+            setAcpAgents(buildWslAcpSkeleton(`WSL · ${selectedEnv.wsl_distro}`, selectedEnv.wsl_distro))
+          }
+          acpPromise = invoke<AcpAgentInfo[]>('list_acp_agents', {
+            installTarget: 'wsl',
+            distro: selectedEnv.wsl_distro,
+            user: selectedEnv.wsl_user ?? null,
+          })
+        }
+      } else {
+        setAcpNotice(null)
+        setAcpAgents(ACP_AGENT_SKELETON)
+        acpPromise = invoke<AcpAgentInfo[]>('list_acp_agents')
+      }
+      const [agents, acp] = await Promise.all([
+        invoke<AgentInfo[]>('scan_agents'),
+        acpPromise,
+      ])
+      setDetectedAgents(agents)
+      setAcpAgents(acp)
+    } catch (error) {
+      console.error('Failed to scan agents:', error)
+      setDetectedAgents(null)
+      setAcpAgents(null)
+    } finally {
+      setScanningAgents(false)
+    }
+  }
+
+  const reset = () => {
+    setStep('intent')
+    setIntent(null)
+    setSelectedProject(null)
+    setSelectedAgent(null)
+    setSelectedAcpAgentId(null)
+    setSelectedEnv(null)
+    setBrowsing(false)
+    setBrowseEnv(null)
+    setBrowseDir('')
+    setBrowseProjectName('')
+    setDetectedAgents(null)
+    setAcpAgents(null)
+    setAcpNotice(null)
+  }
+
+  const goBack = () => {
+    if (browsing) {
+      setBrowsing(false)
+      setBrowseEnv(null)
+      setBrowseDir('')
+      setBrowseProjectName('')
+      return
+    }
+    if (step === 'agent' && intent === 'project') {
+      setStep('project')
+      setSelectedAgent(null)
+      setSelectedAcpAgentId(null)
+      return
+    }
+    reset()
+  }
+
+  const handleIntent = (i: SessionIntent) => {
+    setIntent(i)
+    if (i === 'project') setStep('project')
+    else if (i === 'chat') {
+      setStep('agent')
+      // Auto-select local env and scan agents for chat mode
+      const localEnv = envs.find(e => e.type === 'local')
+      if (localEnv) {
+        setSelectedEnv(localEnv)
+        scanAgents()
+      }
+    }
+    else if (i === 'terminal') setStep('env')
+  }
+
+  const handlePickProject = (p: Project) => {
+    setSelectedProject(p)
+    const env = envs.find(e => e.id === p.env_id)
+    if (env) {
+      setSelectedEnv(env)
+    }
+    scanAgents()
+    setStep('agent')
+  }
+
+  const handleBrowseConfirm = async () => {
+    const path = browseDir.trim()
+    const name = browseProjectName.trim()
+
+    if (!browseEnv || !path || !name) return
+
+    // Create project in database
+    try {
+      const projectId = await invoke<string>('create_project', {
+        req: { name, path, env_id: browseEnv.id }
+      })
+
+      setSelectedProject({ id: projectId, name, path, env_id: browseEnv.id } as Project)
+      setSelectedEnv(browseEnv)
+      setBrowsing(false)
+      setBrowseDir('')
+      setBrowseProjectName('')
+      scanAgents()
+      setStep('agent')
+    } catch (err) {
+      console.error('Failed to create project:', err)
+      return
+    }
+  }
+
+  const handleBrowseDirChange = (value: string) => {
+    const previousSuggestedName = getProjectNameFromPath(browseDir)
+    const nextSuggestedName = getProjectNameFromPath(value)
+
+    setBrowseDir(value)
+
+    if (!browseProjectName || browseProjectName === previousSuggestedName) {
+      setBrowseProjectName(nextSuggestedName)
+    }
+  }
+
+  const handleLaunch = () => {
+    if (intent === 'terminal') {
+      // Pure terminal session - requires selectedEnv
+      if (!selectedEnv) return
+      onCreateSession(selectedEnv, null)
+    } else if (intent === 'chat' && selectedAgent) {
+      // AI chat - use selected env or fallback to local env
+      const env = selectedEnv || envs.find(e => e.type === 'local')
+      if (!env) return
+      onCreateSession(env, selectedAgent)
+    } else if (intent === 'project' && selectedAgent) {
+      if (!selectedEnv) return
+      onCreateSession(selectedEnv, selectedAgent, selectedProject || undefined, selectedAcpAgentId)
+    }
+  }
+
+  const canLaunch =
+    (intent === 'project' && selectedProject && selectedAgent && (selectedAgent !== 'acp' || !!selectedAcpAgentId)) ||
+    (intent === 'chat' && selectedAgent) ||
+    (intent === 'terminal' && selectedEnv)
+
+  const getSummary = () => {
+    const parts: string[] = []
+    if (selectedEnv) parts.push(selectedEnv.name)
+    if (selectedProject) parts.push(selectedProject.name)
+    if (selectedAgent) {
+      if (selectedAgent === 'acp') {
+        const acpAgent = acpAgents?.find((agent) => agent.id === selectedAcpAgentId)
+        parts.push(acpAgent?.name || getAcpRuntimeDefinition(selectedAcpAgentId)?.name || 'ACP Agent')
+      } else {
+        const agent = getAgentDefinition(selectedAgent)
+        if (agent) parts.push(agent.name)
+      }
+    }
+    if (intent === 'terminal') parts.push('纯终端')
+    return parts.join('  ›  ')
+  }
+
+  const getStepTitle = () => {
+    if (step === 'intent') return { title: '新建会话', sub: '你想做什么？' }
+    if (step === 'project') {
+      if (browsing) return { title: '浏览目录', sub: browseEnv ? '输入工作目录路径' : '在哪个环境上？' }
+      return { title: '选择项目', sub: '选择一个工作目录，或浏览新目录' }
+    }
+    if (step === 'agent') {
+      if (intent === 'project') {
+        return { title: '选择 Agent', sub: `项目: ${selectedProject?.name} · ${selectedEnv?.name}` }
+      }
+      return { title: '选择 Agent', sub: '选择一个 AI 对话助手' }
+    }
+    if (step === 'env') return { title: '选择环境', sub: '连接到哪台机器？' }
+    return { title: '新建会话', sub: '' }
+  }
+
+  const t = getStepTitle()
+
+  return (
+    <div className="fixed inset-0 bg-black/55 flex items-center justify-center z-50 backdrop-blur-sm">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-[520px] bg-[#1b1f2b] border border-[#282d3e] rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[80vh]"
+      >
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-[#1d2030] flex-shrink-0">
+          <div className="text-base font-semibold">{t.title}</div>
+          <div className="text-xs text-[#4e5270] mt-1">{t.sub}</div>
+        </div>
+
+        {/* Breadcrumb */}
+        {step !== 'intent' && (
+          <div className="px-5 py-2 border-b border-[#1d2030] flex items-center gap-2 text-[11px] text-[#4e5270] flex-shrink-0">
+            <span
+              onClick={reset}
+              className="cursor-pointer hover:text-[#8B5CF6]"
+            >
+              {(() => {
+                const meta = getIntentMeta(intent)
+                const Icon = meta.icon
+
+                return (
+                  <span className="inline-flex items-center gap-1">
+                    <Icon size={12} />
+                    {meta.label}
+                  </span>
+                )
+              })()}
+            </span>
+            {step === 'agent' && selectedProject && (
+              <>
+                <span>›</span>
+                <span
+                  onClick={() => { setStep('project'); setSelectedAgent(null); setSelectedAcpAgentId(null) }}
+                  className="cursor-pointer hover:text-[#8B5CF6]"
+                >
+                  {selectedProject.name}
+                </span>
+              </>
+            )}
+            {selectedAgent && (
+              <>
+                <span>›</span>
+                <span style={{ color: getAgentDefinition(selectedAgent)?.color }}>
+                  {selectedAgent === 'acp'
+                    ? (acpAgents?.find((agent) => agent.id === selectedAcpAgentId)?.name || 'ACP Agent')
+                    : getAgentDefinition(selectedAgent)?.name}
+                </span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Body */}
+        <div className="p-5 flex flex-col gap-2 overflow-y-auto flex-1">
+          {/* Step: Intent */}
+          {step === 'intent' && (
+            <>
+              <IntentCard
+                icon={Folder}
+                title="在项目中编码"
+                desc="选择目录 · 选择 Agent · 开始编码"
+                onClick={() => handleIntent('project')}
+              />
+              <IntentCard
+                icon={MessageSquareText}
+                title="开一个 AI 对话"
+                desc="无需项目目录，直接与 AI 交流"
+                onClick={() => handleIntent('chat')}
+              />
+              <IntentCard
+                icon={SquareTerminal}
+                title="打开纯终端"
+                desc="SSH / 本地 Shell，不启动 Agent"
+                onClick={() => handleIntent('terminal')}
+              />
+            </>
+          )}
+
+          {/* Step: Pick Project */}
+          {step === 'project' && !browsing && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">最近使用的项目</div>
+              {projects.slice(0, 3).map((p) => {
+                const env = envs.find(e => e.id === p.env_id)
+                const isOffline = env?.status === 'offline'
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => !isOffline && handlePickProject(p)}
+                    className={`flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer bg-[#151820] border border-transparent hover:border-[#282d3e] ${isOffline ? 'opacity-40 cursor-default' : ''}`}
+                  >
+                    <Folder size={14} className="shrink-0 text-[#8b8fa7]" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-medium font-mono">{p.name}</div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#1b1f2b] text-[#4e5270]">
+                          {env?.name}
+                        </span>
+                        <span className="text-[10px] text-[#4e5270] font-mono">{p.path}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+
+              {/* Browse new directory */}
+              <div
+                onClick={() => setBrowsing(true)}
+                className="flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer border border-dashed border-[#282d3e] text-[#8b8fa7] hover:border-[#8B5CF6] hover:text-[#8B5CF6] transition-colors mt-2"
+              >
+                <FolderOpen size={16} className="shrink-0" />
+                <div>
+                  <div className="text-[13px] font-medium">浏览新目录...</div>
+                  <div className="text-[11px] text-[#4e5270]">选择环境，输入路径，自动记为项目</div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Sub-flow: Browse directory */}
+          {step === 'project' && browsing && !browseEnv && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择环境</div>
+              {envs.map((e) => (
+                <EnvCard
+                  key={e.id}
+                  env={e}
+                  selected={false}
+                  disabled={e.status === 'offline'}
+                  onClick={() => setBrowseEnv(e)}
+                />
+              ))}
+            </>
+          )}
+
+          {step === 'project' && browsing && browseEnv && (
+            <>
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-[#151820]">
+                <EnvTypeIcon env={browseEnv} size={16} className="shrink-0 text-[#8b8fa7]" />
+                <span className="text-[13px] font-medium">{browseEnv.name}</span>
+                <span
+                  onClick={() => setBrowseEnv(null)}
+                  className="ml-auto text-[11px] text-[#4e5270] cursor-pointer hover:text-[#8B5CF6]"
+                >
+                  更换
+                </span>
+              </div>
+
+              <div className="mt-2">
+                <div className="text-[11px] text-[#4e5270] mb-2">输入工作目录的绝对路径</div>
+                <input
+                  value={browseDir}
+                  onChange={(e) => handleBrowseDirChange(e.target.value)}
+                  placeholder="~/my-project  或  /home/user/project"
+                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] font-mono text-[13px] outline-none focus:border-[#8B5CF6]"
+                  autoFocus
+                />
+                <div className="text-[11px] text-[#4e5270] mb-2 mt-3">Project name</div>
+                <input
+                  value={browseProjectName}
+                  onChange={(e) => setBrowseProjectName(e.target.value)}
+                  placeholder="my-project"
+                  className="w-full px-4 py-3 rounded-lg border border-[#282d3e] bg-[#151820] text-[#e2e4ed] text-[13px] outline-none focus:border-[#8B5CF6]"
+                />
+                {browseDir.trim() && (
+                  <div className="mt-3 px-4 py-3 rounded-lg bg-[#151820] border border-[#1d2030]">
+                    <div className="text-[11px] text-[#4e5270] mb-2">将创建为项目</div>
+                    <div className="flex items-center gap-2">
+                      <Folder size={14} className="shrink-0 text-[#8b8fa7]" />
+                      <span className="text-[13px] font-mono font-medium">{browseProjectName.trim() || getProjectNameFromPath(browseDir)}</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] text-[#4e5270]">
+                        on
+                        <EnvTypeIcon env={browseEnv} size={12} />
+                        {browseEnv.name}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Step: Pick Agent (for project) */}
+          {step === 'agent' && intent === 'project' && (
+            <>
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[#151820] mb-2">
+                <Folder size={14} className="shrink-0 text-[#8b8fa7]" />
+                <span className="text-[12px] font-mono font-medium">{selectedProject?.name}</span>
+                <span className="text-[10px] text-[#4e5270]">{selectedEnv?.name} · {selectedProject?.path}</span>
+              </div>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">选择 Agent</div>
+                {scanningAgents && (
+                  <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
+                )}
+              </div>
+              {PROJECT_AGENTS.filter((agent) => agent.id !== 'acp').map((a) => (
+                <AgentCard
+                  key={a.id}
+                  agent={a}
+                  selected={selectedAgent === a.id}
+                  onClick={() => {
+                    setSelectedAgent(a.id)
+                    setSelectedAcpAgentId(null)
+                  }}
+                  detectedInfo={detectedAgents?.find(d => d.id === a.id)}
+                />
+              ))}
+              <div className="h-px bg-[#1d2030] my-3" />
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">ACP Agents</div>
+              <div className="text-[11px] text-[#4e5270] mb-2">
+                {acpAgents?.[0]?.locationLabel
+                  ? `选择 ${acpAgents[0].locationLabel} 上已安装的 ACP runtime，并以 chat 模式在当前项目目录中启动。`
+                  : '选择一个已安装的 ACP runtime，并以 chat 模式在当前项目目录中启动。'}
+              </div>
+              {acpNotice && (
+                <div className="text-[11px] text-[#8b8fa7] mb-2 px-3 py-2 rounded-lg bg-[#151820] border border-[#1d2030]">
+                  {acpNotice}
+                </div>
+              )}
+              {(acpAgents || []).map((agent) => (
+                <AcpAgentCard
+                  key={agent.id}
+                  agent={agent}
+                  selected={selectedAgent === 'acp' && selectedAcpAgentId === agent.id}
+                  onClick={() => {
+                    if (agent.status === 'not_installed' || !agent.runtimeSupported) return
+                    setSelectedAgent('acp')
+                    setSelectedAcpAgentId(agent.id)
+                  }}
+                />
+              ))}
+            </>
+          )}
+
+          {/* Step: Pick Agent (for chat) */}
+          {step === 'agent' && intent === 'chat' && (
+            <>
+              <div className="flex items-center gap-2 mb-1">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270]">选择 Agent</div>
+                {scanningAgents && (
+                  <span className="text-[10px] text-[#4e5270] animate-pulse">扫描中...</span>
+                )}
+              </div>
+              {CHAT_AGENTS.map((a) => (
+                <AgentCard
+                  key={a.id}
+                  agent={a}
+                  selected={selectedAgent === a.id}
+                  onClick={() => setSelectedAgent(a.id)}
+                  detectedInfo={detectedAgents?.find(d => d.id === a.id)}
+                />
+              ))}
+
+              {selectedAgent && (
+                <>
+                  <div className="h-px bg-[#1d2030] my-2" />
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">运行环境（可选）</div>
+                  <div className="text-[11px] text-[#4e5270] mb-1">独立对话默认本地运行，也可以选择远程环境</div>
+                  {envs.filter(e => e.status === 'online').map((e) => (
+                    <EnvCard
+                      key={e.id}
+                      env={e}
+                      selected={selectedEnv?.id === e.id}
+                      onClick={() => setSelectedEnv(selectedEnv?.id === e.id ? null : e)}
+                    />
+                  ))}
+                </>
+              )}
+            </>
+          )}
+
+          {/* Step: Pick Env (for terminal) */}
+          {step === 'env' && (
+            <>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[#4e5270] mb-1">选择环境</div>
+              {envs.map((e) => (
+                <EnvCard
+                  key={e.id}
+                  env={e}
+                  selected={selectedEnv?.id === e.id}
+                  disabled={e.status === 'offline'}
+                  onClick={() => setSelectedEnv(e)}
+                />
+              ))}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-4 border-t border-[#1d2030] flex items-center gap-3 flex-shrink-0">
+          <button
+            onClick={step === 'intent' ? onClose : goBack}
+            className="px-4 py-2 rounded-lg border border-[#282d3e] bg-transparent text-[#8b8fa7] text-[12px] font-medium hover:bg-[#222738] transition-colors"
+          >
+            {step === 'intent' ? '取消' : '← 返回'}
+          </button>
+
+          <div className="flex-1 text-[11px] text-[#4e5270] font-mono text-center truncate">
+            {getSummary()}
+          </div>
+
+          {browsing && browseEnv && browseDir.trim() && browseProjectName.trim() ? (
+            <button
+              onClick={handleBrowseConfirm}
+              className="px-5 py-2 rounded-lg bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] text-white text-[12px] font-semibold shadow-lg"
+            >
+              <span className="inline-flex items-center gap-1">
+                确认目录
+                <ChevronRight size={14} />
+              </span>
+            </button>
+          ) : (
+            <button
+              onClick={handleLaunch}
+              disabled={!canLaunch}
+              className={`px-5 py-2 rounded-lg text-[12px] font-semibold ${
+                canLaunch
+                  ? 'bg-gradient-to-r from-[#8B5CF6] to-[#6D28D9] text-white shadow-lg'
+                  : 'bg-[#222738] text-[#4e5270]'
+              }`}
+            >
+              <span className="inline-flex items-center gap-1">
+                <Rocket size={14} />
+                启动
+              </span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Intent Card Component
+function IntentCard({ icon: Icon, title, desc, onClick }: { icon: LucideIcon; title: string; desc: string; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex items-center gap-4 px-4 py-3.5 rounded-xl cursor-pointer bg-[#151820] border border-transparent hover:border-[#8B5CF6] hover:bg-[#1b1f2b] transition-all"
+    >
+      <span className="flex w-11 justify-center text-[#8b8fa7]">
+        <Icon size={28} strokeWidth={1.75} />
+      </span>
+      <div className="flex-1">
+        <div className="text-[14px] font-semibold">{title}</div>
+        <div className="text-[12px] text-[#4e5270] mt-0.5">{desc}</div>
+      </div>
+      <ChevronRight size={16} className="text-[#4e5270]" />
+    </div>
+  )
+}
+
+function AcpAgentCard({ agent, selected, onClick }: {
+  agent: AcpAgentInfo
+  selected: boolean
+  onClick: () => void
+}) {
+  const fallback = getAcpRuntimeDefinition(agent.id)
+  const isSelectable = agent.runtimeSupported && agent.status !== 'not_installed'
+  const statusNote = agent.status === 'not_installed'
+    ? 'CLI 未安装'
+    : !agent.runtimeSupported
+      ? '已检测到 CLI，但缺少 ACP Runtime'
+      : agent.lastError
+        ? agent.lastError
+        : 'ACP Runtime 可用'
+  const tone = agent.status === 'ready'
+    ? 'bg-green-500/10 text-green-400'
+    : agent.status === 'not_installed'
+      ? 'bg-gray-500/10 text-gray-400'
+      : agent.status === 'runtime_missing'
+        ? 'bg-red-500/10 text-red-400'
+      : 'bg-yellow-500/10 text-yellow-400'
+
+  return (
+    <div
+      onClick={isSelectable ? onClick : undefined}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors ${
+        selected
+          ? 'bg-[#4ADE80]/[0.09] border border-[#4ADE80]/60'
+          : 'bg-[#151820] border border-transparent'
+      } ${isSelectable ? 'cursor-pointer hover:border-[#282d3e]' : 'cursor-default opacity-60'}`}
+    >
+      <div className="w-1.5 h-5.5 rounded" style={{ backgroundColor: fallback?.color || '#4ADE80' }} />
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <div className="text-[13px] font-medium">{agent.name || fallback?.name || agent.id}</div>
+          <span className={`text-[9px] px-1.5 py-0.5 rounded ${tone}`}>
+            {agent.status === 'not_installed' ? '未安装' : agent.status === 'runtime_missing' ? '缺少 ACP Runtime' : agent.status}
+          </span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#1b1f2b] text-[#8b8fa7]">
+            {agent.locationLabel}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-[11px] text-[#4e5270] font-mono">{agent.executable}</div>
+          {agent.version && (
+            <div className="text-[10px] text-[#6b7280] font-mono">{agent.version}</div>
+          )}
+        </div>
+        <div className="text-[10px] text-[#6b7280] truncate">{statusNote}</div>
+      </div>
+      {selected && <Check size={16} style={{ color: fallback?.color || '#4ADE80' }} />}
+    </div>
+  )
+}
+
+// Agent Card Component
+function AgentCard({ agent, selected, onClick, detectedInfo }: {
+  agent: typeof AGENTS[0];
+  selected: boolean;
+  onClick: () => void;
+  detectedInfo?: AgentInfo | null;
+}) {
+  const isInstalled = detectedInfo?.installed ?? null
+  const version = detectedInfo?.version
+
+  return (
+    <div
+      onClick={onClick}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg cursor-pointer transition-colors ${
+        selected
+          ? 'bg-[#8B5CF6]/[0.09] border border-[#8B5CF6]/60'
+          : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
+      }`}
+    >
+      <div className="w-1.5 h-5.5 rounded" style={{ backgroundColor: agent.color }} />
+      <div className="flex-1">
+        <div className="flex items-center gap-2">
+          <div className="text-[13px] font-medium">{agent.name}</div>
+          {isInstalled === true && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">
+              已安装
+            </span>
+          )}
+          {isInstalled === false && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400">
+              未找到
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="text-[11px] text-[#4e5270]">{agent.short}</div>
+          {version && (
+            <div className="text-[10px] text-[#6b7280] font-mono">{version}</div>
+          )}
+        </div>
+      </div>
+      {selected && <Check size={16} style={{ color: agent.color }} />}
+    </div>
+  )
+}
+
+// Env Card Component
+function EnvCard({ env, selected, disabled, onClick }: { env: Env; selected: boolean; disabled?: boolean; onClick: () => void }) {
+  return (
+    <div
+      onClick={disabled ? undefined : onClick}
+      className={`flex items-center gap-3 px-4 py-2.5 rounded-lg ${
+        disabled ? 'cursor-default opacity-35' : 'cursor-pointer'
+      } ${
+        selected
+          ? 'bg-[#8B5CF6]/[0.12] border border-[#8B5CF6]/60'
+          : 'bg-[#151820] border border-transparent hover:border-[#282d3e]'
+      } transition-colors`}
+    >
+      <EnvTypeIcon env={env} size={18} className="text-[#8b8fa7]" />
+      <div className="flex-1">
+        <div className="text-[13px] font-medium">{env.name}</div>
+        <div className="text-[10px] text-[#4e5270] font-mono">{env.host || 'localhost'}</div>
+      </div>
+      {disabled && <span className="text-[10px] text-[#F87171]">离线</span>}
+      {!disabled && (
+        <div className="w-[7px] h-[7px] rounded-full bg-[#4ADE80] shadow-sm shadow-[#4ADE80]" />
       )}
+      {selected && <Check size={16} className="text-[#8B5CF6]" />}
     </div>
   )
 }

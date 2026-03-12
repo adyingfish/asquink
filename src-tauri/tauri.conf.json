@@ -1,17 +1,17 @@
 {
-  "productName": "AgentHub",
-  "version": "1.0.0",
-  "identifier": "com.agenthub.app",
+  "productName": "ASquink",
+  "version": "0.0.0",
+  "identifier": "com.asquink.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
       {
-        "title": "AgentHub",
+        "title": "ASquink",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -29,7 +29,9 @@
           "windows": ["main"],
           "permissions": [
             "core:default",
-            "shell:allow-open"
+            "shell:allow-open",
+            "clipboard-manager:allow-write-text",
+            "clipboard-manager:allow-read-text"
           ]
         }
       ]
